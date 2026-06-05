@@ -1,0 +1,30 @@
+{
+  "project": {
+    "name": "devops-portfolio",
+    "description": "Dự án Web App Portfolio cá nhân kỷ niệm lễ tốt nghiệp, kết hợp gửi lời chúc kèm hình ảnh/video kỷ niệm.",
+    "created_at": "2026-04-11T17:20:00+07:00"
+  },
+  "tech_stack": [
+    "React (Vite)",
+    "TailwindCSS",
+    "Python (FastAPI)",
+    "PostgreSQL",
+    "Docker",
+    "Google Cloud Platform (GCS, Compute Engine, Cloud SQL)"
+  ],
+  "features": [
+    "Trang thiệp chúc mừng tốt nghiệp & Gửi lời chúc",
+    "Tải lên nhiều hình ảnh/video cùng lúc",
+    "Trình chiếu video/hình ảnh qua Carousel & Lightbox Zoom mượt mà",
+    "Tích hợp GCP Cloud Storage để lưu trữ media quy mô lớn",
+    "Bảo mật Admin đăng nhập đa lớp & Duyệt lời chúc trước khi hiển thị",
+    "Đo lường System Health Metrics & Trình trạng kết nối DB"
+  ],
+  "decisions": [
+    "Dùng FastAPI làm Backend để tối ưu hiệu năng phục vụ API",
+    "Lưu trữ media trực tiếp trên GCP Cloud Storage để tối ưu băng thông & dung lượng cho VM",
+    "Không lưu JSON Key cứng trên VM, kết nối Storage qua IAM VM Service Account",
+    "Cách ly PostgreSQL Database trong mạng VPC Private IP để chống xâm nhập trái phép",
+    "Sử dụng React Carousel và HTML5 Video Player cho giao diện trình chiếu đa phương tiện"
+  ]
+}

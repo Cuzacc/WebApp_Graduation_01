@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: devops_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: devops
+      POSTGRES_PASSWORD: devops_password
+      POSTGRES_DB: devops_portfolio
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - devops_network
+
+  backend:
+    build: ./backend
+    container_name: devops_backend
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    volumes:
+      - ./uploads:/app/uploads
+    env_file:
+      - ./backend/.env
+    environment:
+      # Trong Docker, db host là tên container thay vì localhost
+      - DATABASE_URL=postgresql://devops:devops_password@postgres:5432/devops_portfolio
+    networks:
+      - devops_network
+
+
+  frontend:
+    build: ./frontend
+    container_name: devops_frontend
+    restart: unless-stopped
+    networks:
+      - devops_network
+
+  nginx:
+    image: nginx:alpine
+    container_name: devops_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - devops_network
+
+volumes:
+  postgres_data:
+
+networks:
+  devops_network:

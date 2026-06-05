@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .animate-gradient-x {
+    background-size: 200% 200%;
+    animation: gradient-x 4s ease infinite;
+  }
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: #1e0305; /* Đỏ đô thẫm để đồng bộ với gradient chính */
+  color: #fceade;
+  overflow-x: hidden;
+}
+
+/* Tùy chỉnh Scrollbar cho đồng bộ với giao diện Đỏ Đô */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #150305;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4a121a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #ffb703;
+}
+
+/* Hoạt ảnh tung mũ cử nhân và cuộn bằng tốt nghiệp */
+@keyframes floatUp {
+  0% {
+    transform: translateY(105vh) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-10vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+.animate-float-up {
+  animation: floatUp 4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}

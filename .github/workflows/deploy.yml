@@ -1,0 +1,45 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout mã nguồn
+      uses: actions/checkout@v3
+
+    - name: Setup Docker Compose
+      run: docker-compose version
+
+    - name: Build và giả lập chạy hệ thống
+      run: |
+        docker-compose up -d --build
+        
+    - name: Đợi dịch vụ khởi động
+      run: sleep 10
+        
+    - name: Test Tự Động (Ping Health API)
+      run: |
+        # Nginx cổng 80 sẽ chặn và đẩy /api/health sang backend
+        curl -f http://localhost/api/health || exit 1
+        
+    - name: Cleanup
+      run: docker-compose down
+
+  deploy:
+    needs: build-test
+    runs-on: ubuntu-latest
+    # Chỉ deploy nếu đẩy code lên nhánh main
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Deploy tới VPS (Ví dụ mẫu)
+      run: |
+        echo "🚀 Chúc mừng! Mọi bài test đều passed, code đang được đẩy lên Server..."
+        echo "Lưu ý: Để deploy thật, hãy cấu hình sử dụng ssh-action với biến Secrets của Github."
