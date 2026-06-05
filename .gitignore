@@ -12,3 +12,4 @@ build/
 .idea/
 *.db
 *.sqlite3
+.brain/
