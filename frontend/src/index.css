@@ -58,3 +58,24 @@ body {
 .animate-float-up {
   animation: floatUp 4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
+
+/* Hoạt ảnh xuất hiện mượt mà cho các view (Fade In) */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease forwards;
+}
+
+.animate-fade-in-slow {
+  animation: fadeIn 0.8s ease forwards;
+}
+

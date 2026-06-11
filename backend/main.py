@@ -14,64 +14,60 @@ from typing import Optional, List
 from dotenv import load_dotenv
 load_dotenv()
 
-from google.cloud import storage
+# Import các tiện ích GCS và File
+import utils
+from utils import upload_to_gcs
 
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
-
-def upload_to_gcs(file: UploadFile, bucket_name: str) -> str:
-    try:
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        
-        # Sinh tên file độc nhất tránh trùng lặp
-        file_ext = os.path.splitext(file.filename)[1].lower()
-        unique_filename = f"{uuid.uuid4().hex}{file_ext}"
-        
-        blob = bucket.blob(unique_filename)
-        blob.upload_from_file(file.file, content_type=file.content_type)
-        
-        return f"https://storage.googleapis.com/{bucket_name}/{unique_filename}"
-    except Exception as e:
-        print(f"Lỗi upload tệp tin lên Cloud Storage: {e}")
-        raise HTTPException(status_code=500, detail="Không thể lưu trữ tệp tin lên Cloud.")
 
 import models, schemas, database
 from database import engine, get_db
 
-# Tự động tạo thư mục uploads lưu trữ ảnh
-os.makedirs("uploads", exist_ok=True)
+def init_db(db_engine):
+    # Tự động tạo thư mục uploads lưu trữ ảnh cục bộ
+    os.makedirs("uploads", exist_ok=True)
+    
+    # Tạo bảng dữ liệu nếu chưa có
+    models.Base.metadata.create_all(bind=db_engine)
+    
+    # Tự động chạy di chuyển (migration) dữ liệu cũ
+    with db_engine.connect() as conn:
+        # Add image_urls column if not exists in wishes table
+        conn.execute(text("ALTER TABLE wishes ADD COLUMN IF NOT EXISTS image_urls JSONB;"))
+        # Migrate single image_url to image_urls JSON array for legacy rows
+        conn.execute(text("""
+            UPDATE wishes 
+            SET image_urls = json_build_array(image_url) 
+            WHERE image_url IS NOT NULL AND image_urls IS NULL;
+        """))
+        # Create indexes for optimized performance
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wishes_approved_deleted ON wishes(is_approved, is_deleted);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wishes_created_at ON wishes(created_at DESC);"))
+        # Clean up expired admin sessions
+        conn.execute(text("DELETE FROM admin_sessions WHERE expires_at < (NOW() AT TIME ZONE 'UTC');"))
+        conn.commit()
 
-# Lệnh này sẽ tự động tạo bảng dữ liệu trên PostgreSQL nếu chưa có
-models.Base.metadata.create_all(bind=engine)
-
-# Auto migration for legacy database schema
-with engine.connect() as conn:
-    # Add image_urls column if not exists in wishes table
-    conn.execute(text("ALTER TABLE wishes ADD COLUMN IF NOT EXISTS image_urls JSONB;"))
-    # Migrate single image_url to image_urls JSON array for legacy rows
-    conn.execute(text("""
-        UPDATE wishes 
-        SET image_urls = json_build_array(image_url) 
-        WHERE image_url IS NOT NULL AND image_urls IS NULL;
-    """))
-    # Create indexes for optimized performance
-    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wishes_approved_deleted ON wishes(is_approved, is_deleted);"))
-    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_wishes_created_at ON wishes(created_at DESC);"))
-    # Clean up expired admin sessions
-    conn.execute(text("DELETE FROM admin_sessions WHERE expires_at < (NOW() AT TIME ZONE 'UTC');"))
-    conn.commit()
+# Khởi chạy database & di chuyển dữ liệu
+init_db(engine)
 
 app = FastAPI(title="Graduation Web App API", description="API Backend Server powered by FastAPI")
 
+# Đọc cấu hình origins từ biến môi trường ALLOWED_ORIGINS
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+if allowed_origins_env:
+    origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+else:
+    origins = ["http://localhost:5173", "http://localhost"]
 
-# Cấp quyền cho React Frontend gọi chéo API
+# Cấp quyền gọi chéo API (CORS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Cấu hình Mount static files để phân phối ảnh đã upload
 app.mount("/api/static/uploads", StaticFiles(directory="uploads"), name="uploads")
@@ -306,19 +302,22 @@ def hard_delete_wish(
     if not wish:
         raise HTTPException(status_code=404, detail="Không tìm thấy thiệp")
     
-    # Xóa file vật lý lưu trên server nếu có
-    if wish.image_url:
-        filename = wish.image_url.split("/")[-1]
-        file_path = os.path.join("uploads", filename)
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                print(f"Error removing file {file_path}: {e}")
+    # Gom toàn bộ URL ảnh/video liên quan để xóa sạch
+    urls_to_delete = []
+    if wish.image_urls:
+        if isinstance(wish.image_urls, list):
+            urls_to_delete.extend(wish.image_urls)
+    if wish.image_url and wish.image_url not in urls_to_delete:
+        urls_to_delete.append(wish.image_url)
+        
+    # Gọi tiện ích dọn dẹp vật lý trên Local hoặc GCS
+    if urls_to_delete:
+        utils.delete_media_files(urls_to_delete)
                 
     db.delete(wish)
     db.commit()
     return {"status": "success"}
+
 
 @app.get("/api/admin/stats", response_model=schemas.AdminStatsResponse)
 def get_admin_stats(
