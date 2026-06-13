@@ -30,3 +30,14 @@ class AdminSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
 
+
+class TrafficLog(Base):
+    __tablename__ = "traffic_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ip_address = Column(String, index=True)
+    user_agent = Column(Text)
+    endpoint = Column(String)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+

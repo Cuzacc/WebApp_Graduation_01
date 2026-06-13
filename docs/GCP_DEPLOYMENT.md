@@ -128,12 +128,150 @@ Tài liệu này hướng dẫn cậu từng bước thiết lập hạ tầng c
 
 ## 🔒 Phần 3: Trỏ tên miền & Cấu hình HTTPS bảo mật
 
-1.  Truy cập trang quản lý Tên miền của cậu, trỏ bản ghi **A** về địa chỉ **External IP** (IP công cộng) của VM Compute Engine.
-2.  Sau khi tên miền được cập nhật thành công, SSH vào VM và chạy lệnh sau để lấy chứng chỉ Let's Encrypt SSL miễn phí:
-    ```bash
-    # Chạy certbot trực tiếp bên trong container Nginx để cấu hình HTTPS tự động
-    docker compose exec nginx certbot --nginx -d tên_miền_của_cậu.com
-    ```
-3.  Làm theo hướng dẫn trên màn hình, điền email và chọn chuyển hướng tự động từ HTTP sang HTTPS.
+Để cấu hình HTTPS an toàn mà không làm ảnh hưởng đến mã nguồn chạy ở máy local, cậu thực hiện lấy chứng chỉ Let's Encrypt trên máy VM và cấu hình SSL cho Nginx Docker như sau:
 
-Chúc mừng cậu! Trang web kỷ niệm của Quang Tùng hiện tại đã được triển khai hoàn chỉnh, bảo mật tối đa và sẵn sàng đón nhận hàng nghìn lời chúc và video từ mọi người!
+### Bước 1: Lấy chứng chỉ SSL Standalone trên Host VM
+1. Tạm thời tắt Docker Compose để giải phóng cổng 80:
+   ```bash
+   docker compose down
+   ```
+2. Cài đặt Certbot trên máy VM:
+   ```bash
+   sudo apt-get install certbot -y
+   ```
+3. Chạy Certbot chế độ Standalone để lấy chứng chỉ:
+   ```bash
+   sudo certbot certonly --standalone -d ten_mien_cua_cau.com -d www.ten_mien_cua_cau.com
+   ```
+   *(Nhập Email, đồng ý với điều khoản dịch vụ để hoàn tất. Chứng chỉ sẽ được lưu tại `/etc/letsencrypt/live/ten_mien_cua_cau.com/`)*
+
+### Bước 2: Cập nhật docker-compose.yml trên VM để mở cổng 443 và mount chứng chỉ
+Mở file `docker-compose.yml` trên VM:
+```bash
+nano docker-compose.yml
+```
+Cập nhật dịch vụ `nginx` để mở cổng `443` và chia sẻ thư mục chứng chỉ `/etc/letsencrypt` từ máy VM vào trong container:
+```yaml
+  nginx:
+    image: nginx:alpine
+    container_name: devops_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - devops_network
+```
+
+### Bước 3: Cập nhật cấu hình nginx/nginx.conf trên VM để kích hoạt SSL
+Mở file cấu hình Nginx trên VM:
+```bash
+nano nginx/nginx.conf
+```
+Thay thế toàn bộ nội dung file bằng cấu hình hỗ trợ SSL dưới đây (thay thế `ten_mien_cua_cau.com` bằng tên miền thực tế của cậu):
+```nginx
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    client_max_body_size 500M;
+
+    # Định nghĩa vùng lưu trữ IP giới hạn đăng nhập Admin
+    limit_req_zone $binary_remote_addr zone=admin_login_limit:10m rate=5r/m;
+
+    # Bản đồ kiểm tra phương thức request: chỉ giới hạn rate limit cho phương thức POST (gửi thiệp)
+    map $request_method $wishes_limit_key {
+        default "";
+        POST $binary_remote_addr;
+    }
+
+    # Định nghĩa vùng lưu trữ IP giới hạn gửi thiệp chúc (10 yêu cầu/phút chống Spam)
+    limit_req_zone $wishes_limit_key zone=wishes_limit:10m rate=10r/m;
+
+    # 1. Chuyển hướng toàn bộ traffic HTTP (cổng 80) sang HTTPS (cổng 443)
+    server {
+        listen 80;
+        server_name ten_mien_cua_cau.com www.ten_mien_cua_cau.com;
+        return 301 https://$host$request_uri;
+    }
+
+    # 2. Cấu hình HTTPS chính thức
+    server {
+        listen 443 ssl;
+        server_name ten_mien_cua_cau.com www.ten_mien_cua_cau.com;
+
+        # Đường dẫn tới chứng chỉ SSL Let's Encrypt (được mount từ máy VM)
+        ssl_certificate /etc/letsencrypt/live/ten_mien_cua_cau.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/ten_mien_cua_cau.com/privkey.pem;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        # Cấu hình các HTTP Security Header cơ bản
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options "nosniff";
+        add_header X-XSS-Protection "1; mode=block";
+
+        # Áp dụng giới hạn tần suất cho API đăng nhập Admin chống Brute-force
+        location = /api/admin/login {
+            limit_req zone=admin_login_limit burst=3 nodelay;
+            limit_req_status 429;
+            
+            proxy_pass http://backend:8000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+
+        # Giới hạn tần suất đăng thiệp chúc mới để tránh spam DoS làm tràn ổ đĩa
+        location = /api/wishes {
+            limit_req zone=wishes_limit burst=5 nodelay;
+            limit_req_status 429;
+            
+            proxy_pass http://backend:8000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+
+        # Chặn đường dẫn bắt đầu bằng /api cho Python Backend xử lý
+        location /api/ {
+            proxy_pass http://backend:8000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+
+        # Trỏ mọi đường dẫn còn lại về Frontend React
+        location / {
+            proxy_pass http://frontend:80;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+    }
+}
+```
+
+### Bước 4: Khởi chạy lại Docker Compose
+```bash
+docker compose up -d --build
+```
+
+Chúc mừng cậu! Trang web kỷ niệm của Quang Tùng hiện tại đã được triển khai hoàn chỉnh, bảo mật tối đa với HTTPS và sẵn sàng đón nhận hàng nghìn lời chúc và video từ mọi người!

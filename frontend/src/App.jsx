@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { 
   MapPin, Clock, Camera, Send, Plus, Trash2, 
   RotateCcw, Check, X, Edit3, ShieldAlert, 
   Award, Filter, RefreshCw, BarChart2, CheckCircle2,
   ChevronLeft, ChevronRight, Home, Calendar, BookOpen, 
-  Image as ImageIcon, Play, Pause, ExternalLink, Download, Info
+  Image as ImageIcon, Play, Pause, ExternalLink, Download, Info,
+  Upload, Settings, Trash
 } from 'lucide-react'
 import axios from 'axios'
 
@@ -16,6 +17,25 @@ const isVideoUrl = (url) => {
   if (!url) return false;
   const ext = url.split('.').pop().toLowerCase();
   return ['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(ext);
+};
+
+// Default Timeline fallback
+const defaultTimeline = [
+  { time: '08:00 - 09:00', title: 'Đón Khách & Chụp Ảnh Lưu Niệm', desc: 'Đón tiếp bạn bè và người thân tại sảnh hội trường chính, chụp những tấm hình kỷ niệm đầu ngày lễ.', icon: 'Camera' },
+  { time: '09:00 - 10:30', title: 'Lễ Tốt Nghiệp Chính Thức', desc: 'Thực hiện làm lễ trao bằng và vinh danh cử nhân tại Hội trường chính.', icon: 'Award' },
+  { time: '10:30 - 11:30', title: 'Chụp Ảnh Tự Do Tại Khuôn Viên', desc: 'Quang Tùng đi chụp ảnh kỷ yếu, chụp lưu niệm tự do cùng bạn bè tại sân trường và các góc check-in xịn sò.', icon: 'MapPin' },
+  { time: '11:30 - 13:30', title: 'Tiệc Chiêu Đãi Thân Mật', desc: 'Dùng bữa trưa liên hoan thân mật cùng gia đình và bạn bè tại nhà hàng gần khuôn viên trường.', icon: 'Info' }
+];
+
+const renderTimelineIcon = (iconName) => {
+  switch (iconName) {
+    case 'Camera': return <Camera className="w-3.5 h-3.5" />;
+    case 'Award': return <Award className="w-3.5 h-3.5" />;
+    case 'MapPin': return <MapPin className="w-3.5 h-3.5" />;
+    case 'Info':
+    default:
+      return <Info className="w-3.5 h-3.5" />;
+  }
 };
 
 // Carousel component for swipeable image slide show
@@ -127,8 +147,35 @@ function App() {
   // Navigation State
   const [activeView, setActiveView] = useState('home'); // 'home', 'logistics', 'guestbook', 'gallery'
 
+  // Traffic Monitoring States
+  const [trafficStats, setTrafficStats] = useState({
+    active_users: 0,
+    total_views: 0,
+    total_visitors: 0,
+    recent_logs: [],
+    device_stats: { mobile: 0, desktop: 0 },
+    top_endpoints: []
+  });
+  const [trafficLoading, setTrafficLoading] = useState(false);
+  const [logsLimit, setLogsLimit] = useState(20);
+
+  // Canvas Confetti Ref
+  const canvasRef = useRef(null);
+
   // Data states
-  const [settings, setSettings] = useState({ graduation_time: '2026-06-15T08:00:00', current_location: 'Đang chuẩn bị' });
+  const [settings, setSettings] = useState({ 
+    graduation_time: '2026-06-16T08:00:00', 
+    current_location: 'Đại học Duy Tân 03 Quang Trung Đà Nẵng',
+    avatar_url: '',
+    google_maps_url: '',
+    gallery_unlocked: 'false',
+    timeline: '',
+    site_title: 'QUANG TÙNG GRADUATION',
+    invitation_desc: 'Sự hiện diện của mọi người là niềm vinh dự và là nguồn động viên to lớn để Tùng vững bước trên chặng đường sắp tới. Trân trọng kính mời mọi người đến tham dự và chung vui cùng Tùng trong buổi lễ tốt nghiệp đầy ý nghĩa này.',
+    location_title: 'Hội trường chính',
+    location_subtitle: 'Đại học Duy Tân 03 Quang Trung Đà Nẵng',
+    location_parking: '🚗 Thông tin đỗ xe: Khách gửi xe tại bãi gửi xe của trường Đại học Duy Tân.'
+  });
   const [wishes, setWishes] = useState([]);
   const [adminWishes, setAdminWishes] = useState([]);
   const [trashWishes, setTrashWishes] = useState([]);
@@ -162,6 +209,71 @@ function App() {
   const [newLocationText, setNewLocationText] = useState('');
   const [isEditingTime, setIsEditingTime] = useState(false);
   const [newTimeText, setNewTimeText] = useState('');
+  const [isAdminSettingsOpen, setIsAdminSettingsOpen] = useState(false);
+
+  // Direct Inline Editing states for location card
+  const [isEditingLocationTitle, setIsEditingLocationTitle] = useState(false);
+  const [editLocationTitle, setEditLocationTitle] = useState('');
+  const [isEditingLocationSubtitle, setIsEditingLocationSubtitle] = useState(false);
+  const [editLocationSubtitle, setEditLocationSubtitle] = useState('');
+  const [isEditingLocationParking, setIsEditingLocationParking] = useState(false);
+  const [editLocationParking, setEditLocationParking] = useState('');
+
+  // Direct Inline Editing states for timeline items
+  const [editingTimelineIndex, setEditingTimelineIndex] = useState(null);
+  const [editingTimelineItem, setEditingTimelineItem] = useState({ time: '', title: '', desc: '', icon: 'Info' });
+
+  // Refs to track editing status and avoid auto-polling overwrite resets
+  const isEditingLocationTitleRef = useRef(false);
+  const isEditingLocationSubtitleRef = useRef(false);
+  const isEditingLocationParkingRef = useRef(false);
+  const isEditingLocationRef = useRef(false);
+  const isEditingTimeRef = useRef(false);
+  const editingTimelineIndexRef = useRef(null);
+
+  useEffect(() => { isEditingLocationTitleRef.current = isEditingLocationTitle; }, [isEditingLocationTitle]);
+  useEffect(() => { isEditingLocationSubtitleRef.current = isEditingLocationSubtitle; }, [isEditingLocationSubtitle]);
+  useEffect(() => { isEditingLocationParkingRef.current = isEditingLocationParking; }, [isEditingLocationParking]);
+  useEffect(() => { isEditingLocationRef.current = isEditingLocation; }, [isEditingLocation]);
+  useEffect(() => { isEditingTimeRef.current = isEditingTime; }, [isEditingTime]);
+  useEffect(() => { editingTimelineIndexRef.current = editingTimelineIndex; }, [editingTimelineIndex]);
+
+  // WebSocket for Real-time Reactions
+  const wsRef = useRef(null);
+  const [floatingReactions, setFloatingReactions] = useState([]);
+
+  // Admin Edit Form states
+  const [editAvatarLoading, setEditAvatarLoading] = useState(false);
+  const [editAvatarUrl, setEditAvatarUrl] = useState('');
+  const [editMapsUrl, setEditMapsUrl] = useState('');
+  const [editGalleryUnlocked, setEditGalleryUnlocked] = useState(false);
+  const [editTimelineItems, setEditTimelineItems] = useState([]);
+  const [editSiteTitle, setEditSiteTitle] = useState('');
+  const [editInvitationDesc, setEditInvitationDesc] = useState('');
+  const [editGraduationTime, setEditGraduationTime] = useState('');
+  
+  // Ticking time states for system verification
+  const [deviceTime, setDeviceTime] = useState(new Date().toLocaleTimeString('vi-VN'));
+  const [serverTime, setServerTime] = useState(null);
+
+  // Sync serverTime when settings update
+  useEffect(() => {
+    if (settings.server_time) {
+      setServerTime(new Date(settings.server_time));
+    }
+  }, [settings.server_time]);
+
+  // Ticking clock effect
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setDeviceTime(new Date().toLocaleTimeString('vi-VN'));
+      setServerTime(prev => {
+        if (!prev) return null;
+        return new Date(prev.getTime() + 1000);
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Admin Login modal states
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
@@ -193,6 +305,110 @@ function App() {
     }
   }, []);
 
+  // 1b. WebSocket connection for real-time reactions
+  useEffect(() => {
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/ws`;
+    
+    let socket;
+    const connectWS = () => {
+      socket = new WebSocket(wsUrl);
+      wsRef.current = socket;
+      
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'reaction') {
+            triggerFloatingReaction(data.reactionType);
+          }
+        } catch (e) {
+          console.error("Lỗi WebSocket message:", e);
+        }
+      };
+      
+      socket.onclose = () => {
+        setTimeout(connectWS, 3000); // reconnect
+      };
+      
+      socket.onerror = () => {
+        socket.close();
+      };
+    };
+    
+    connectWS();
+    
+    return () => {
+      if (socket) socket.close();
+    };
+  }, []);
+
+  const triggerFloatingReaction = (type) => {
+    const chars = { heart: '❤️', cap: '🎓' };
+    const char = chars[type] || '❤️';
+    const id = Math.random();
+    
+    setFloatingReactions(prev => [
+      ...prev,
+      {
+        id,
+        char,
+        left: 10 + Math.random() * 80,
+        size: 24 + Math.random() * 24
+      }
+    ]);
+    
+    setTimeout(() => {
+      setFloatingReactions(prev => prev.filter(r => r.id !== id));
+    }, 3000);
+  };
+
+  const sendReaction = (reactionType) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'reaction',
+        reactionType
+      }));
+    } else {
+      triggerFloatingReaction(reactionType);
+    }
+  };
+
+  // Dynamic RSVP/attendance form options
+  const getActivePhase = () => {
+    const mockMode = settings.time_mock_mode || 'real';
+    if (mockMode === 'moc_1') return 1;
+    if (mockMode === 'moc_2') return 2;
+    if (mockMode === 'moc_3') return 3;
+    
+    const gradTime = new Date(settings.graduation_time).getTime();
+    const now = new Date().getTime();
+    const ceremonyDuration = 4 * 60 * 60 * 1000;
+    
+    if (now < gradTime) return 1;
+    if (now >= gradTime && now <= gradTime + ceremonyDuration) return 2;
+    return 3;
+  };
+
+  const getAttendanceOptions = () => {
+    const phase = getActivePhase();
+    if (phase === 1) {
+      return [
+        { value: 'attending', label: 'Sẽ đến dự lễ 🎓' },
+        { value: 'absent', label: 'Chúc từ xa 💌' }
+      ];
+    } else if (phase === 2) {
+      return [
+        { value: 'attending_ceremony', label: 'Đang ở buổi lễ nè 📸' },
+        { value: 'absent', label: 'Chúc từ xa 💌' }
+      ];
+    } else {
+      return [
+        { value: 'attended', label: 'Đã tham gia 🎓' },
+        { value: 'absent', label: 'Chúc từ xa 💌' }
+      ];
+    }
+  };
+
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     setAdminError('');
@@ -220,8 +436,14 @@ function App() {
     try {
       const settingsRes = await axios.get(`${API_BASE}/settings`);
       setSettings(settingsRes.data);
-      setNewLocationText(settingsRes.data.current_location);
-      setNewTimeText(settingsRes.data.graduation_time);
+      if (!isEditingLocationRef.current) setNewLocationText(settingsRes.data.current_location);
+      if (!isEditingTimeRef.current) setNewTimeText(settingsRes.data.graduation_time);
+      
+      // Khởi tạo các ô nhập sửa đổi trực tiếp nếu chưa chỉnh sửa
+      if (!isEditingLocationTitleRef.current) setEditLocationTitle(settingsRes.data.location_title || 'Hội trường chính');
+      if (!isEditingLocationSubtitleRef.current) setEditLocationSubtitle(settingsRes.data.location_subtitle || 'Đại học Duy Tân 03 Quang Trung Đà Nẵng');
+      if (!isEditingLocationParkingRef.current) setEditLocationParking(settingsRes.data.location_parking || '');
+      setEditMapsUrl(settingsRes.data.google_maps_url || '');
 
       const wishesRes = await axios.get(`${API_BASE}/wishes`);
       setWishes(wishesRes.data);
@@ -253,6 +475,49 @@ function App() {
     }
   };
 
+  const fetchTrafficStats = async () => {
+    if (!isAdminMode || !adminKey) return;
+    setTrafficLoading(true);
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      const res = await axios.get(`${API_BASE}/admin/traffic?limit=${logsLimit}`, { headers });
+      setTrafficStats(res.data);
+    } catch (err) {
+      console.error("Lỗi đồng bộ dữ liệu giám sát:", err);
+    } finally {
+      setTrafficLoading(false);
+    }
+  };
+
+  const downloadTrafficCSV = async () => {
+    if (!isAdminMode || !adminKey) return;
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      const response = await axios.get(`${API_BASE}/admin/traffic/export`, {
+        headers,
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `traffic_logs_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      console.error("Lỗi tải file CSV:", err);
+      alert("Không thể tải file CSV nhật ký!");
+    }
+  };
+
+  useEffect(() => {
+    if (isAdminMode && activeView === 'monitoring') {
+      fetchTrafficStats();
+      const interval = setInterval(fetchTrafficStats, 15000);
+      return () => clearInterval(interval);
+    }
+  }, [isAdminMode, activeView, adminKey, logsLimit]);
+
   // Load starting data
   useEffect(() => {
     fetchPublicData();
@@ -271,6 +536,35 @@ function App() {
   useEffect(() => {
     setSelectedTag('all');
   }, [adminTab]);
+
+  // Parse Settings details when settings change
+  useEffect(() => {
+    setEditMapsUrl(settings.google_maps_url || '');
+    setEditAvatarUrl(settings.avatar_url || '');
+    setEditGalleryUnlocked(settings.gallery_unlocked === 'true');
+    setEditSiteTitle(settings.site_title || 'QUANG TÙNG GRADUATION');
+    setEditInvitationDesc(settings.invitation_desc || 'Sự hiện diện của mọi người là niềm vinh dự và là nguồn động viên to lớn để Tùng vững bước trên chặng đường sắp tới. Trân trọng kính mời mọi người đến tham dự và chung vui cùng Tùng trong buổi lễ tốt nghiệp đầy ý nghĩa này.');
+    if (!isEditingTimeRef.current) setEditGraduationTime(settings.graduation_time || '2026-06-16T08:00:00');
+    
+    if (editingTimelineIndexRef.current === null) {
+      try {
+        if (settings.timeline) {
+          setEditTimelineItems(JSON.parse(settings.timeline));
+        } else {
+          setEditTimelineItems(defaultTimeline);
+        }
+      } catch (e) {
+        setEditTimelineItems(defaultTimeline);
+      }
+    }
+  }, [settings]);
+
+  // Set default attendance status when settings load
+  useEffect(() => {
+    const opts = getAttendanceOptions();
+    const defaultStatus = opts[0]?.value || 'attending';
+    setFormData(prev => ({ ...prev, attendance_status: defaultStatus }));
+  }, [settings.graduation_time]);
 
   // 4. Calculate countdown timer
   useEffect(() => {
@@ -298,6 +592,7 @@ function App() {
   useEffect(() => {
     if (timeLeft.isFinished) {
       triggerCapToss();
+      triggerConfetti();
     }
   }, [timeLeft.isFinished]);
 
@@ -320,15 +615,122 @@ function App() {
       newParticles.push({
         id: Math.random(),
         char: elements[Math.floor(Math.random() * elements.length)],
-        left: Math.random() * 100, // horizontal percentage
-        delay: Math.random() * 2, // staggered animation
-        size: 20 + Math.random() * 25, // custom sizing
+        left: Math.random() * 100, 
+        delay: Math.random() * 2, 
+        size: 20 + Math.random() * 25, 
       });
     }
     setParticles(newParticles);
     setTimeout(() => {
       setParticles([]);
     }, 6000);
+  };
+
+  // HTML5 Canvas Confetti Explosion (Upgraded Modern Physics Engine)
+  const triggerConfetti = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    let confettiParticles = [];
+    const colors = [
+      '#ffb703', // Gold
+      '#800020', // Burgundy
+      '#ff007f', // Vibrant Rose
+      '#00f5d4', // Neon Cyan
+      '#7b2cbf', // Royal Purple
+      '#ff5400'  // Bright Orange
+    ];
+    
+    const shapes = ['circle', 'square', 'triangle', 'heart'];
+    
+    const createBurst = (x, angle, speedMultiplier) => {
+      for (let i = 0; i < 80; i++) {
+        const theta = angle + (Math.random() - 0.5) * 0.4; // slight spread
+        const speed = (Math.random() * 12 + 8) * speedMultiplier;
+        
+        confettiParticles.push({
+          x: x,
+          y: canvas.height + 10,
+          vx: Math.cos(theta) * speed,
+          vy: Math.sin(theta) * speed,
+          radius: Math.random() * 4 + 3,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          shape: shapes[Math.floor(Math.random() * shapes.length)],
+          opacity: 1,
+          rotation: Math.random() * 360,
+          rotationSpeed: (Math.random() - 0.5) * 10,
+          wobble: Math.random() * 10,
+          wobbleSpeed: Math.random() * 0.1 + 0.05,
+          gravity: 0.2,
+          drag: 0.98
+        });
+      }
+    };
+    
+    // Shoot from bottom left (pointing up-right, -45 degrees = -pi/4)
+    createBurst(0, -Math.PI / 4, 1.2);
+    // Shoot from bottom right (pointing up-left, -135 degrees = -3*pi/4)
+    createBurst(canvas.width, -3 * Math.PI / 4, 1.2);
+    
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      let active = false;
+      
+      confettiParticles.forEach(p => {
+        p.vx *= p.drag;
+        p.vy *= p.drag;
+        p.vy += p.gravity;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.opacity -= 0.006; // fade out slowly
+        p.rotation += p.rotationSpeed;
+        p.wobble += p.wobbleSpeed;
+        
+        const drift = Math.sin(p.wobble) * 1.5;
+        
+        if (p.opacity > 0 && p.y < canvas.height + 20) {
+          active = true;
+          ctx.save();
+          ctx.translate(p.x + drift, p.y);
+          ctx.rotate((p.rotation * Math.PI) / 180);
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = p.opacity;
+          
+          ctx.beginPath();
+          if (p.shape === 'circle') {
+            ctx.arc(0, 0, p.radius, 0, 2 * Math.PI);
+            ctx.fill();
+          } else if (p.shape === 'triangle') {
+            ctx.moveTo(0, -p.radius);
+            ctx.lineTo(p.radius, p.radius);
+            ctx.lineTo(-p.radius, p.radius);
+            ctx.closePath();
+            ctx.fill();
+          } else if (p.shape === 'heart') {
+            ctx.arc(-p.radius / 2, 0, p.radius / 2, Math.PI, 0, false);
+            ctx.arc(p.radius / 2, 0, p.radius / 2, Math.PI, 0, false);
+            ctx.lineTo(0, p.radius);
+            ctx.closePath();
+            ctx.fill();
+          } else {
+            ctx.fillRect(-p.radius, -p.radius, p.radius * 2, p.radius * 1.5);
+          }
+          
+          ctx.restore();
+        }
+      });
+      
+      if (active) {
+        requestAnimationFrame(animate);
+      } else {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    };
+    
+    animate();
   };
 
   // 6. Client-Side Image Compression using HTML5 Canvas
@@ -371,13 +773,61 @@ function App() {
     });
   };
 
-  // 7. Handle Image File Selection
-  const handleFileChange = (e) => {
+  // 7. Handle File Selection
+  const handleFileChange = async (e) => {
     const files = Array.from(e.target.files);
-    if (files.length > 0) {
-      setSelectedFiles(prev => [...prev, ...files]);
-      const newPreviews = files.map(file => URL.createObjectURL(file));
-      setFilePreviews(prev => [...prev, ...newPreviews]);
+    if (files.length === 0) return;
+    
+    const validFiles = [];
+    const validPreviews = [];
+    
+    for (let file of files) {
+      const isVideo = file.type.startsWith('video/');
+      const isImage = file.type.startsWith('image/');
+      
+      if (!isVideo && !isImage) {
+        alert(`Tệp "${file.name}" không hợp lệ. Chỉ chấp nhận Ảnh & Video!`);
+        continue;
+      }
+      
+      const sizeLimit = isVideo ? 50 * 1024 * 1024 : 15 * 1024 * 1024;
+      if (file.size > sizeLimit) {
+        const sizeLabel = isVideo ? "50MB" : "15MB";
+        alert(`Tệp "${file.name}" vượt quá dung lượng giới hạn (${sizeLabel})!`);
+        continue;
+      }
+      
+      if (isVideo) {
+        try {
+          const duration = await new Promise((resolve) => {
+            const video = document.createElement('video');
+            video.preload = 'metadata';
+            video.onloadedmetadata = () => {
+              window.URL.revokeObjectURL(video.src);
+              resolve(video.duration);
+            };
+            video.onerror = () => {
+              resolve(0);
+            };
+            video.src = window.URL.createObjectURL(file);
+          });
+          
+          if (duration > 180) { // 3 minutes = 180s
+            alert(`Video "${file.name}" quá dài (thời lượng tối đa 3 phút)!`);
+            continue;
+          }
+        } catch (err) {
+          print("Lỗi kiểm tra thời lượng video:", err);
+        }
+      }
+      
+      validFiles.push(file);
+      validPreviews.push(URL.createObjectURL(file));
+    }
+    
+    if (validFiles.length > 0) {
+      setSelectedFiles(prev => [...prev, ...validFiles]);
+      setFilePreviews(prev => [...prev, ...validPreviews]);
     }
   };
 
@@ -389,7 +839,7 @@ function App() {
     });
   };
 
-  // 8. Submit Wish / RSVP
+  // 8. Submit Wish / RSVP Form
   const handleSubmitWish = async (e) => {
     if (e) e.preventDefault();
     if (!formData.sender_name || !formData.message) return;
@@ -400,11 +850,10 @@ function App() {
       payload.append('sender_name', formData.sender_name);
       payload.append('message', formData.message);
       payload.append('attendance_status', formData.attendance_status);
-      
       if (formData.photographer_tag) {
-        payload.append('photographer_tag', formData.photographer_tag.trim());
+        payload.append('photographer_tag', formData.photographer_tag);
       }
-
+      
       if (selectedFiles.length > 0) {
         for (let i = 0; i < selectedFiles.length; i++) {
           const file = selectedFiles[i];
@@ -417,19 +866,20 @@ function App() {
         }
       }
 
-      await axios.post(`${API_BASE}/wishes`, payload, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      await axios.post(`${API_BASE}/wishes`, payload);
 
       // Reset Form & Close
-      setFormData({ sender_name: '', message: '', photographer_tag: '', attendance_status: 'attending' });
-      setRsvpType('attending');
+      const opts = getAttendanceOptions();
+      const defaultStatus = opts[0]?.value || 'attending';
+      setFormData({ sender_name: '', message: '', photographer_tag: '', attendance_status: defaultStatus });
+      setRsvpType(defaultStatus);
       setCustomAttendance('');
       setSelectedFiles([]);
       setFilePreviews([]);
       setIsSubmitOpen(false);
       
       triggerCapToss();
+      triggerConfetti();
       fetchPublicData();
     } catch (err) {
       console.error("Gửi lời chúc thất bại:", err);
@@ -459,6 +909,131 @@ function App() {
       fetchPublicData();
     } catch (err) {
       console.error("Cập nhật giờ đếm ngược lỗi:", err);
+    }
+  };
+
+  const saveTimelineItem = async (idx, updatedItem) => {
+    const newItems = [...editTimelineItems];
+    newItems[idx] = updatedItem;
+    setEditTimelineItems(newItems);
+    setEditingTimelineIndex(null);
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      await axios.post(`${API_BASE}/admin/settings`, { timeline: JSON.stringify(newItems) }, { headers });
+      fetchPublicData();
+    } catch (err) {
+      console.error("Cập nhật lịch trình lỗi:", err);
+    }
+  };
+
+  const addTimelineItem = async () => {
+    const newItem = { time: '00:00 - 00:00', title: 'Hoạt động mới', desc: 'Mô tả hoạt động mới', icon: 'Info' };
+    const newItems = [...editTimelineItems, newItem];
+    setEditTimelineItems(newItems);
+    setEditingTimelineIndex(newItems.length - 1);
+    setEditingTimelineItem(newItem);
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      await axios.post(`${API_BASE}/admin/settings`, { timeline: JSON.stringify(newItems) }, { headers });
+      fetchPublicData();
+    } catch (err) {
+      console.error("Thêm hoạt động lỗi:", err);
+    }
+  };
+
+  const deleteTimelineItem = async (idx) => {
+    if (!window.confirm("Bạn có chắc chắn muốn xóa hoạt động này?")) return;
+    const newItems = editTimelineItems.filter((_, i) => i !== idx);
+    setEditTimelineItems(newItems);
+    setEditingTimelineIndex(null);
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      await axios.post(`${API_BASE}/admin/settings`, { timeline: JSON.stringify(newItems) }, { headers });
+      fetchPublicData();
+    } catch (err) {
+      console.error("Xóa hoạt động lỗi:", err);
+    }
+  };
+
+  const updateLocationTitle = async () => {
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      await axios.post(`${API_BASE}/admin/settings`, { location_title: editLocationTitle }, { headers });
+      setIsEditingLocationTitle(false);
+      fetchPublicData();
+    } catch (err) {
+      console.error("Cập nhật tên hội trường lỗi:", err);
+    }
+  };
+
+  const updateLocationSubtitle = async () => {
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      await axios.post(`${API_BASE}/admin/settings`, { location_subtitle: editLocationSubtitle }, { headers });
+      setIsEditingLocationSubtitle(false);
+      fetchPublicData();
+    } catch (err) {
+      console.error("Cập nhật địa chỉ hội trường lỗi:", err);
+    }
+  };
+
+  const updateLocationParking = async () => {
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      await axios.post(`${API_BASE}/admin/settings`, { location_parking: editLocationParking }, { headers });
+      setIsEditingLocationParking(false);
+      fetchPublicData();
+    } catch (err) {
+      console.error("Cập nhật thông tin đỗ xe lỗi:", err);
+    }
+  };
+
+  const toggleGalleryLock = async (checked) => {
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      await axios.post(`${API_BASE}/admin/settings`, { gallery_unlocked: checked ? 'true' : 'false' }, { headers });
+      fetchPublicData();
+    } catch (err) {
+      console.error("Lỗi thay đổi trạng thái khóa thư viện:", err);
+    }
+  };
+
+  const handleAvatarUpload = async (file) => {
+    if (!file) return;
+    setEditAvatarLoading(true);
+    try {
+      const payload = new FormData();
+      payload.append('file', file);
+      
+      const headers = { 
+        'X-Admin-Key': adminKey
+      };
+      const res = await axios.post(`${API_BASE}/admin/upload`, payload, { headers });
+      setEditAvatarUrl(res.data.url);
+    } catch (err) {
+      console.error("Tải avatar lên thất bại:", err);
+      alert(err.response?.data?.detail || "Tải avatar lên thất bại!");
+    } finally {
+      setEditAvatarLoading(false);
+    }
+  };
+
+  const saveAdminSettings = async () => {
+    try {
+      const headers = { 'X-Admin-Key': adminKey };
+      const payload = {
+        site_title: editSiteTitle,
+        graduation_time: editGraduationTime,
+        invitation_desc: editInvitationDesc,
+        avatar_url: editAvatarUrl,
+        gallery_unlocked: editGalleryUnlocked ? 'true' : 'false'
+      };
+      await axios.post(`${API_BASE}/admin/settings`, payload, { headers });
+      setIsAdminSettingsOpen(false);
+      fetchPublicData();
+    } catch (err) {
+      console.error("Lưu cấu hình lỗi:", err);
+      alert("Lưu cấu hình thất bại!");
     }
   };
 
@@ -526,11 +1101,59 @@ function App() {
     activeWishesList = wishes;
   }
 
-  const uniqueTags = ['all', ...new Set(activeWishesList.filter(w => w.photographer_tag).map(w => w.photographer_tag))];
+  const uniqueTags = ['all', 'attending', 'absent'];
 
   const filteredWishes = selectedTag === 'all' 
     ? activeWishesList 
-    : activeWishesList.filter(w => w.photographer_tag === selectedTag);
+    : selectedTag === 'attending'
+      ? activeWishesList.filter(w => w.attendance_status === 'attending' || w.attendance_status === 'attending_ceremony' || w.attendance_status === 'attended')
+      : activeWishesList.filter(w => w.attendance_status === 'absent');
+
+  const allMediaItems = wishes
+    .filter(w => w.is_approved && !w.is_deleted)
+    .reduce((acc, w) => {
+      if (w.image_urls && w.image_urls.length > 0) {
+        w.image_urls.forEach(url => acc.push({ url, sender_name: w.sender_name, wish: w }));
+      } else if (w.image_url) {
+        acc.push({ url: w.image_url, sender_name: w.sender_name, wish: w });
+      }
+      return acc;
+    }, []);
+
+  const getFormattedGraduationDate = () => {
+    try {
+      const gradDate = new Date(settings.graduation_time);
+      if (isNaN(gradDate.getTime())) {
+        return {
+          dateStr: 'Ngày 16 tháng 06 năm 2026',
+          timeStr: 'Thứ Ba, vào lúc 08:00 sáng'
+        };
+      }
+      
+      const day = gradDate.getDate();
+      const month = String(gradDate.getMonth() + 1).padStart(2, '0');
+      const year = gradDate.getFullYear();
+      
+      const daysOfWeek = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+      const dayOfWeekStr = daysOfWeek[gradDate.getDay()];
+      
+      const hours = gradDate.getHours();
+      const minutes = String(gradDate.getMinutes()).padStart(2, '0');
+      const period = hours >= 12 ? 'chiều' : 'sáng';
+      const displayHours = hours > 12 ? hours - 12 : (hours === 0 ? 12 : hours);
+      const displayHoursStr = String(displayHours).padStart(2, '0');
+      
+      return {
+        dateStr: `Ngày ${day} tháng ${month} năm ${year}`,
+        timeStr: `${dayOfWeekStr}, vào lúc ${displayHoursStr}:${minutes} ${period}`
+      };
+    } catch (e) {
+      return {
+        dateStr: 'Ngày 16 tháng 06 năm 2026',
+        timeStr: 'Thứ Ba, vào lúc 08:00 sáng'
+      };
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#3a060b] via-[#5c0e17] to-[#1e0305] text-[#fceade] font-sans selection:bg-[#gold-primary]/30 relative pb-28 border-4 border-[#ffb703]/20 m-0 md:m-3 rounded-none md:rounded-3xl shadow-2xl">
@@ -568,59 +1191,124 @@ function App() {
               <ShieldAlert className="w-4 h-4 animate-bounce" />
               <span>CHẾ ĐỘ QUẢN TRỊ VIÊN</span>
             </div>
-            <button 
-              onClick={logoutAdmin}
-              className="text-xs px-2.5 py-1 rounded-lg bg-[#4a121a] hover:bg-[#800020] text-[#fceade] border border-[#ffb703]/10 transition-colors"
-            >
-              Thoát Admin
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setActiveView(activeView === 'monitoring' ? 'home' : 'monitoring')}
+                className={`text-xs px-2.5 py-1 rounded-lg border flex items-center gap-1 transition-all ${
+                  activeView === 'monitoring'
+                    ? 'bg-[#ffb703] text-[#1a0508] border-[#ffb703] font-bold shadow-glow-gold'
+                    : 'bg-[#4a121a] hover:bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]/20'
+                }`}
+              >
+                <BarChart2 className="w-3.5 h-3.5" />
+                <span>Giám sát</span>
+              </button>
+              <button 
+                onClick={() => setIsAdminSettingsOpen(true)}
+                className="text-xs px-2.5 py-1 rounded-lg bg-[#4a121a] hover:bg-[#ffb703]/25 text-[#ffb703] border border-[#ffb703]/20 flex items-center gap-1 transition-all"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Cấu hình</span>
+              </button>
+              <button 
+                onClick={logoutAdmin}
+                className="text-xs px-2.5 py-1 rounded-lg bg-[#4a121a] hover:bg-[#800020] text-[#fceade] border border-[#ffb703]/10 transition-colors"
+              >
+                Thoát Admin
+              </button>
+            </div>
           </div>
         )}
 
         {/* 🎓 LOGO & HEADER */}
         <header className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-[#800020] to-[#ffb703] p-[2px] shadow-glow-burgundy mb-3">
-            <div className="w-full h-full rounded-full bg-[#4a0e17] flex items-center justify-center">
-              <Award className="w-8 h-8 text-[#ffb703]" />
+          <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-gradient-to-br from-[#800020] to-[#ffb703] p-[2px] shadow-glow-burgundy mb-3 overflow-hidden">
+            <div className="w-full h-full rounded-full bg-[#4a0e17] flex items-center justify-center overflow-hidden">
+              {settings.avatar_url ? (
+                <img 
+                  src={settings.avatar_url} 
+                  alt="Avatar" 
+                  className="w-full h-full object-cover" 
+                />
+              ) : (
+                <Award className="w-12 h-12 text-[#ffb703]" />
+              )}
             </div>
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-[#fceade] via-[#ffb703] to-[#fceade] bg-clip-text text-transparent">
-            QUANG TÙNG GRADUATION
+            {settings.site_title || 'QUANG TÙNG GRADUATION'}
           </h1>
-          <p className="text-xs text-[#d0a5aa] mt-1">Lễ Tốt Nghiệp & Kỷ Niệm của Quang Tùng</p>
+          <p className="text-xs text-[#ffb703] font-bold tracking-widest uppercase mt-1">Lễ Tốt Nghiệp Cử Nhân</p>
         </header>
 
         {/* ==================== VIEW 1: HOME / INVITATION ==================== */}
         {activeView === 'home' && (
           <div className="space-y-6 animate-fade-in">
             {/* 📜 ELEGANT INVITATION CARD */}
-            <section className="bg-gradient-to-br from-[#4a0e17] to-[#1e0305] border-2 border-[#ffb703]/40 rounded-3xl p-6 shadow-glow-gold relative overflow-hidden text-center select-none">
-              <div className="absolute top-2 left-2 right-2 bottom-2 border border-[#ffb703]/10 rounded-2xl pointer-events-none"></div>
-              <div className="absolute -top-12 -left-12 w-24 h-24 rounded-full bg-[#ffb703]/5 blur-xl"></div>
+            <section className="bg-gradient-to-br from-[#4a0e17] via-[#2d0b11] to-[#150305] border-2 border-[#ffb703]/50 rounded-3xl p-6 shadow-[0_12px_40px_rgba(0,0,0,0.6)] shadow-glow-gold/10 relative overflow-hidden select-none text-center">
+              {/* Outer decorative borders and corner frames */}
+              <div className="absolute inset-2.5 border border-[#ffb703]/25 rounded-2xl pointer-events-none"></div>
+              <div className="absolute top-4 left-4 w-4 h-4 border-t-2 border-l-2 border-[#ffb703]/60 pointer-events-none"></div>
+              <div className="absolute top-4 right-4 w-4 h-4 border-t-2 border-r-2 border-[#ffb703]/60 pointer-events-none"></div>
+              <div className="absolute bottom-4 left-4 w-4 h-4 border-b-2 border-l-2 border-[#ffb703]/60 pointer-events-none"></div>
+              <div className="absolute bottom-4 right-4 w-4 h-4 border-b-2 border-r-2 border-[#ffb703]/60 pointer-events-none"></div>
               
-              <span className="text-[10px] font-black tracking-[0.2em] text-[#ffb703] uppercase block mb-2">TRÂN TRỌNG KÍNH MỜI</span>
-              <h2 className="text-xl font-extrabold text-[#fceade] tracking-wide mb-1">LỄ TỐT NGHIỆP CỬ NHÂN</h2>
-              <div className="h-[2px] w-12 bg-gradient-to-r from-transparent via-[#ffb703] to-transparent mx-auto my-3"></div>
-              
-              <p className="text-xs text-[#d0a5aa] leading-relaxed max-w-[85%] mx-auto font-medium">
-                Chào mừng cậu đến chung vui cùng tùng trong buổi lễ tốt nghiệp cử nhân ý nghĩa này.
-              </p>
-              
-              <div className="mt-5 bg-[#1a0508]/60 border border-[#ffb703]/10 p-3.5 rounded-2xl max-w-[90%] mx-auto text-left space-y-2.5">
-                <div className="flex items-center gap-2.5 text-xs text-[#fceade]">
-                  <Calendar className="w-4 h-4 text-[#ffb703] shrink-0" />
-                  <div>
-                    <p className="font-bold">Ngày 15 tháng 06 năm 2026</p>
-                    <p className="text-[10px] text-[#d0a5aa]">Thứ Hai, vào lúc 08:00 sáng</p>
+              <div className="absolute -top-12 -left-12 w-32 h-32 rounded-full bg-[#ffb703]/5 blur-2xl pointer-events-none"></div>
+              <div className="absolute -bottom-12 -right-12 w-32 h-32 rounded-full bg-[#800020]/10 blur-2xl pointer-events-none"></div>
+
+              {/* 1. Header Pill */}
+              <div className="inline-block px-3 py-1 rounded-full bg-[#ffb703]/10 border border-[#ffb703]/30 mb-4 shadow-[0_2px_10px_rgba(255,183,3,0.05)]">
+                <span className="text-[9px] font-black tracking-[0.25em] text-[#ffb703] uppercase block pl-[0.25em]">
+                  TRÂN TRỌNG KÍNH MỜI
+                </span>
+              </div>
+
+              {/* 2. Main Title */}
+              <h2 className="text-2xl font-black bg-gradient-to-r from-[#fceade] via-[#ffb703] to-[#fceade] bg-clip-text text-transparent tracking-wide mb-1 leading-normal">
+                LỄ TỐT NGHIỆP
+              </h2>
+
+              {/* 3. Ornamental Divider */}
+              <div className="flex items-center justify-center gap-2.5 my-3.5">
+                <div className="h-[1px] w-8 bg-gradient-to-r from-transparent to-[#ffb703]/60"></div>
+                <span className="text-[10px] text-[#ffb703]/75">❖</span>
+                <div className="h-[1px] w-8 bg-gradient-to-l from-transparent to-[#ffb703]/60"></div>
+              </div>
+
+              {/* 4. Elegant Text Body */}
+              <div className="my-5 px-3 py-3.5 bg-[#150305]/65 border border-[#ffb703]/10 rounded-2xl max-w-[95%] mx-auto backdrop-blur-sm relative">
+                <p className="text-[11px] sm:text-xs text-[#d0a5aa] leading-relaxed font-semibold italic text-justify sm:text-center">
+                  "{settings.invitation_desc || 'Sự hiện diện của mọi người là niềm vinh dự và là nguồn động viên to lớn để Tùng vững bước trên chặng đường sắp tới. Trân trọng kính mời mọi người đến tham dự và chung vui cùng Tùng trong buổi lễ tốt nghiệp đầy ý nghĩa này.'}"
+                </p>
+              </div>
+
+              {/* 5. Date & Location Cards */}
+              <div className="grid grid-cols-1 gap-3.5 max-w-[95%] mx-auto mt-5">
+                
+                {/* Date card */}
+                <div className="relative overflow-hidden p-3.5 rounded-2xl bg-gradient-to-r from-[#5c1620]/30 to-[#2d0b11]/50 border border-[#ffb703]/15 flex items-center gap-4 shadow-md transition-all hover:border-[#ffb703]/30">
+                  <div className="w-10 h-10 rounded-xl bg-[#ffb703]/10 border border-[#ffb703]/25 flex items-center justify-center text-[#ffb703] shrink-0 shadow-[0_2px_8px_rgba(255,183,3,0.1)]">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-[9px] font-bold text-[#ffb703]/85 tracking-widest uppercase">THỜI GIAN</p>
+                    <p className="text-xs font-black text-[#fceade] mt-0.5">{getFormattedGraduationDate().dateStr}</p>
+                    <p className="text-[10px] text-[#d0a5aa] font-semibold">{getFormattedGraduationDate().timeStr}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2.5 text-xs text-[#fceade]">
-                  <MapPin className="w-4 h-4 text-[#ffb703] shrink-0" />
-                  <div>
-                    <p className="font-bold">Hội trường chính Lễ Đường</p>
-                    <p className="text-[10px] text-[#d0a5aa]">{settings.current_location}</p>
+
+                {/* Location card */}
+                <div className="relative overflow-hidden p-3.5 rounded-2xl bg-gradient-to-r from-[#5c1620]/30 to-[#2d0b11]/50 border border-[#ffb703]/15 flex items-center gap-4 shadow-md transition-all hover:border-[#ffb703]/30">
+                  <div className="w-10 h-10 rounded-xl bg-[#ffb703]/10 border border-[#ffb703]/25 flex items-center justify-center text-[#ffb703] shrink-0 shadow-[0_2px_8px_rgba(255,183,3,0.1)]">
+                    <MapPin className="w-5 h-5" />
+                  </div>
+                  <div className="text-left flex-1 min-w-0">
+                    <p className="text-[9px] font-bold text-[#ffb703]/85 tracking-widest uppercase">ĐỊA ĐIỂM</p>
+                    <p className="text-xs font-black text-[#fceade] mt-0.5">{settings.location_title || 'Hội trường chính'}</p>
+                    <p className="text-[10px] text-[#d0a5aa] font-semibold truncate leading-normal">{settings.location_subtitle || 'Đại học Duy Tân 03 Quang Trung Đà Nẵng'}</p>
                   </div>
                 </div>
+
               </div>
             </section>
 
@@ -690,75 +1378,112 @@ function App() {
             </section>
 
             {/* ✉️ RSVP QUICK FORM */}
-            <section className="bg-[#2d0b11]/40 border border-[#5c1620]/30 rounded-3xl p-5 shadow-lg text-left relative">
-              <h3 className="text-sm font-black text-[#ffb703] tracking-widest uppercase mb-3 flex items-center gap-1.5">
-                <Send className="w-4.5 h-4.5" />
-                <span>XÁC NHẬN THAM DỰ (RSVP)</span>
-              </h3>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[9px] font-bold text-[#d0a5aa] block mb-1">TÊN CỦA CẬU *</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.sender_name}
-                    onChange={(e) => setFormData({...formData, sender_name: e.target.value})}
-                    placeholder="Nhập tên của cậu để xác nhận..."
-                    className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[9px] font-bold text-[#d0a5aa] block mb-1">CẬU CÓ THỂ ĐẾN DỰ LỄ TRỰC TIẾP KHÔNG? *</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({...formData, attendance_status: 'attending'})}
-                      className={`py-2 px-1 text-xs font-bold rounded-xl border transition-all ${
-                        formData.attendance_status === 'attending'
-                          ? 'bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]'
-                          : 'bg-[#150305] text-[#d0a5aa] border-[#4a121a]'
-                      }`}
-                    >
-                      🎓 Sẽ Đến Dự Lễ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData({...formData, attendance_status: 'absent'})}
-                      className={`py-2 px-1 text-xs font-bold rounded-xl border transition-all ${
-                        formData.attendance_status === 'absent'
-                          ? 'bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]'
-                          : 'bg-[#150305] text-[#d0a5aa] border-[#4a121a]'
-                      }`}
-                    >
-                      💌 Chúc Từ Xa
-                    </button>
+            {!isAdminMode && (
+              <section className="bg-[#2d0b11]/40 border border-[#5c1620]/30 rounded-3xl p-5 shadow-lg text-left relative">
+                <h3 className="text-sm font-black text-[#ffb703] tracking-widest uppercase mb-4 flex items-center gap-1.5 border-b border-[#4a121a] pb-2">
+                  <Send className="w-4 h-4 text-[#ffb703]" />
+                  <span>XÁC NHẬN THAM DỰ</span>
+                </h3>
+                
+                <form onSubmit={handleSubmitWish} className="space-y-4">
+                  
+                  {/* 1. Sender Name */}
+                  <div>
+                    <label className="text-[9px] font-bold text-[#ffb703] block mb-1">TÊN CỦA CẬU *</label>
+                    <input
+                      type="text"
+                      required
+                      value={formData.sender_name}
+                      onChange={(e) => setFormData({...formData, sender_name: e.target.value})}
+                      placeholder="Nhập tên của cậu để xác nhận..."
+                      className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
+                    />
                   </div>
-                </div>
 
-                <div>
-                  <label className="text-[9px] font-bold text-[#d0a5aa] block mb-1">TIN NHẮN / LỜI CHÚC NGẮN *</label>
-                  <textarea
-                    required
-                    rows={2}
-                    value={formData.message}
-                    onChange={(e) => setFormData({...formData, message: e.target.value})}
-                    placeholder="Gửi vài lời chia vui cùng Tùng nhé..."
-                    className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
-                  />
-                </div>
+                  {/* 2. Attendance Status Buttons */}
+                  <div>
+                    <label className="text-[9px] font-bold text-[#ffb703] block mb-1">CẬU CÓ THỂ THAM GIA CÙNG TÙNG KHÔNG? *</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {getAttendanceOptions().map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setFormData({...formData, attendance_status: opt.value})}
+                          className={`py-2 px-1 text-xs font-bold rounded-xl border transition-all ${
+                            formData.attendance_status === opt.value
+                              ? 'bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]'
+                              : 'bg-[#150305] text-[#d0a5aa] border-[#4a121a]'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-                <button
-                  onClick={() => handleSubmitWish()}
-                  disabled={loading || !formData.sender_name || !formData.message}
-                  className="w-full py-2.5 bg-gradient-to-r from-[#800020] to-[#ffb703] text-[#1a0508] text-xs font-black rounded-xl hover:scale-[1.02] active:scale-95 transition-all shadow-glow-gold flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  <span>XÁC NHẬN RSVP & GỬI LỜI CHÚC 🎓</span>
-                </button>
-              </div>
-            </section>
+                  {/* 3. Wish Message */}
+                  <div>
+                    <label className="text-[9px] font-bold text-[#ffb703] block mb-1">TIN NHẮN / LỜI CHÚC NGẮN *</label>
+                    <textarea
+                      required
+                      rows={2}
+                      value={formData.message}
+                      onChange={(e) => setFormData({...formData, message: e.target.value})}
+                      placeholder="Gửi vài lời chia vui cùng Tùng nhé..."
+                      className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
+                    />
+                  </div>
+
+                  {/* 5. Image & Video File Upload */}
+                  <div>
+                    <label className="text-[9px] font-bold text-[#ffb703] block mb-1">ĐÍNH KÈM ẢNH & VIDEO KỶ NIỆM (TÙY CHỌN)</label>
+                    
+                    {filePreviews.length > 0 && (
+                      <div className="grid grid-cols-3 gap-2 mb-3 max-h-32 overflow-y-auto p-1 bg-[#150305] rounded-xl border border-[#4a121a]/30">
+                        {filePreviews.map((preview, index) => (
+                          <div key={index} className="relative rounded-lg overflow-hidden border border-[#ffb703]/25 aspect-square bg-[#2d0b11]">
+                            {selectedFiles[index] && selectedFiles[index].type.startsWith('video/') ? (
+                              <video src={preview} className="w-full h-full object-cover" preload="metadata" />
+                            ) : (
+                              <img src={preview} alt={`preview-${index}`} className="w-full h-full object-cover" />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeSelectedFile(index)}
+                              className="absolute top-1 right-1 p-0.5 rounded-full bg-red-600 text-white z-10"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <label className="border-2 border-dashed border-[#4a121a] hover:border-[#ffb703]/50 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer bg-[#150305]/50 transition-colors">
+                      <Camera className="w-6 h-6 text-[#ffb703] mb-1" />
+                      <span className="text-[10px] text-[#ffb703] font-bold">NHẤN VÀO ĐỂ TẢI ẢNH & VIDEO KỶ NIỆM</span>
+                      <span className="text-[8px] text-[#d0a5aa]/60 mt-0.5">Chọn nhiều ảnh/video cùng lúc</span>
+                      <input 
+                        type="file" 
+                        multiple
+                        accept="image/*,video/*" 
+                        onChange={handleFileChange} 
+                        className="hidden" 
+                      />
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading || !formData.sender_name || !formData.message}
+                    className="w-full py-2.5 bg-gradient-to-r from-[#800020] to-[#ffb703] text-[#1a0508] text-xs font-black rounded-xl hover:scale-[1.02] active:scale-95 transition-all shadow-glow-gold flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    <span>XÁC NHẬN & GỬI LỜI CHÚC 🎓</span>
+                  </button>
+                </form>
+              </section>
+            )}
           </div>
         )}
 
@@ -821,22 +1546,107 @@ function App() {
               </h3>
               
               <div className="relative border-l-2 border-[#ffb703]/20 ml-2.5 pl-6 space-y-6">
-                {[
-                  { time: '08:00 - 09:00', title: 'Đón Khách & Chụp Ảnh Lưu Niệm', desc: 'Đón tiếp bạn bè và người thân tại sảnh hội trường chính, chụp những tấm hình kỷ niệm đầu ngày lễ.', icon: Camera },
-                  { time: '09:00 - 10:30', title: 'Lễ Tốt Nghiệp Chính Thức', desc: 'Thực hiện làm lễ trao bằng và vinh danh cử nhân tại Hội trường chính Lễ Đường.', icon: Award },
-                  { time: '10:30 - 11:30', title: 'Chụp Ảnh Tự Do Tại Khuôn Viên', desc: 'Quang Tùng đi chụp ảnh kỷ yếu, chụp lưu niệm tự do cùng bạn bè tại sân trường và các góc check-in xịn sò.', icon: MapPin },
-                  { time: '11:30 - 13:30', title: 'Tiệc Chiêu Đãi Thân Mật', desc: 'Dùng bữa trưa liên hoan thân mật cùng gia đình và bạn bè tại nhà hàng gần khuôn viên trường.', icon: Info }
-                ].map((item, idx) => (
+                {editTimelineItems.map((item, idx) => (
                   <div key={idx} className="relative">
                     {/* Circle icon marker */}
                     <div className="absolute -left-[37px] top-0.5 bg-[#4a0e17] border-2 border-[#ffb703] p-1 rounded-full text-[#ffb703]">
-                      <item.icon className="w-3.5 h-3.5" />
+                      {renderTimelineIcon(item.icon)}
                     </div>
-                    <span className="text-[9px] font-bold tracking-wider text-[#ffb703] uppercase block">{item.time}</span>
-                    <h4 className="text-xs font-black text-[#fceade] mt-0.5">{item.title}</h4>
-                    <p className="text-[10px] text-[#d0a5aa] mt-1 leading-relaxed">{item.desc}</p>
+                    
+                    {editingTimelineIndex === idx ? (
+                      <div className="bg-[#1a0508]/85 border border-[#ffb703]/30 p-3 rounded-xl space-y-2 mt-1">
+                        <input
+                          type="text"
+                          value={editingTimelineItem.time}
+                          onChange={(e) => setEditingTimelineItem({ ...editingTimelineItem, time: e.target.value })}
+                          className="w-full bg-[#150305] border border-[#4a121a] rounded px-2 py-1 text-xs text-[#fceade]"
+                          placeholder="Thời gian (VD: 08:00 - 09:00)"
+                        />
+                        <input
+                          type="text"
+                          value={editingTimelineItem.title}
+                          onChange={(e) => setEditingTimelineItem({ ...editingTimelineItem, title: e.target.value })}
+                          className="w-full bg-[#150305] border border-[#4a121a] rounded px-2 py-1 text-xs font-bold text-[#fceade]"
+                          placeholder="Tiêu đề hoạt động"
+                        />
+                        <textarea
+                          value={editingTimelineItem.desc}
+                          onChange={(e) => setEditingTimelineItem({ ...editingTimelineItem, desc: e.target.value })}
+                          className="w-full bg-[#150305] border border-[#4a121a] rounded px-2 py-1 text-xs text-[#d0a5aa]"
+                          placeholder="Mô tả chi tiết"
+                          rows={2}
+                        />
+                        <div className="flex items-center justify-between gap-2">
+                          <select
+                            value={editingTimelineItem.icon}
+                            onChange={(e) => setEditingTimelineItem({ ...editingTimelineItem, icon: e.target.value })}
+                            className="bg-[#150305] border border-[#4a121a] rounded text-xs px-2 py-1 text-[#ffb703]"
+                          >
+                            <option value="Camera">Máy ảnh 📷</option>
+                            <option value="Award">Bằng tốt nghiệp 🎓</option>
+                            <option value="MapPin">Địa điểm 📍</option>
+                            <option value="Info">Thông tin ℹ️</option>
+                          </select>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => saveTimelineItem(idx, editingTimelineItem)}
+                              className="px-2 py-1 bg-[#ffb703] text-[#1a0508] rounded text-xs font-bold flex items-center gap-0.5"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Lưu
+                            </button>
+                            <button
+                              onClick={() => setEditingTimelineIndex(null)}
+                              className="px-2 py-1 bg-[#4a121a] rounded text-xs"
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="group relative">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <span className="text-[9px] font-bold tracking-wider text-[#ffb703] uppercase block">{item.time}</span>
+                            <h4 className="text-xs font-black text-[#fceade] mt-0.5">{item.title}</h4>
+                            <p className="text-[10px] text-[#d0a5aa] mt-1 leading-relaxed">{item.desc}</p>
+                          </div>
+                          {isAdminMode && (
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1">
+                              <button
+                                onClick={() => {
+                                  setEditingTimelineIndex(idx);
+                                  setEditingTimelineItem(item);
+                                }}
+                                className="p-1 text-[#ffb703] hover:text-[#fceade] transition-colors"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => deleteTimelineItem(idx)}
+                                className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
+
+                {isAdminMode && (
+                  <div className="pt-2 flex justify-center">
+                    <button
+                      onClick={addTimelineItem}
+                      className="flex items-center gap-1 px-4 py-2 rounded-xl bg-[#4a0e17] border border-[#ffb703]/30 hover:border-[#ffb703]/60 text-[#ffb703] text-xs font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-md"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Thêm hoạt động mới</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -850,12 +1660,96 @@ function App() {
               <div className="p-4 rounded-2xl bg-[#150305] border border-[#4a121a] text-left space-y-3">
                 <div>
                   <span className="text-[8px] font-bold text-[#ffb703] uppercase">HỘI TRƯỜNG TỔ CHỨC:</span>
-                  <p className="text-xs text-[#fceade] font-bold mt-0.5">Hội trường chính Lễ Đường</p>
-                  <p className="text-[10px] text-[#d0a5aa] mt-0.5">Trường Đại học Công Nghệ Bách Khoa</p>
+                  
+                  {isEditingLocationTitle ? (
+                    <div className="mt-1 flex gap-2">
+                      <input
+                        type="text"
+                        value={editLocationTitle}
+                        onChange={(e) => setEditLocationTitle(e.target.value)}
+                        className="flex-1 bg-[#1a0508] border border-[#ffb703]/40 rounded-lg px-2 py-1 text-xs text-[#fceade] focus:outline-none"
+                      />
+                      <button onClick={updateLocationTitle} className="p-1 bg-[#ffb703] text-[#1a0508] rounded-lg">
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => setIsEditingLocationTitle(false)} className="p-1 bg-[#4a121a] rounded-lg">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-[#fceade] font-bold mt-0.5">{settings.location_title || 'Hội trường chính'}</p>
+                      {isAdminMode && (
+                        <button 
+                          onClick={() => setIsEditingLocationTitle(true)}
+                          className="p-1 text-[#ffb703] hover:text-[#fceade] transition-colors"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {isEditingLocationSubtitle ? (
+                    <div className="mt-1 flex gap-2">
+                      <input
+                        type="text"
+                        value={editLocationSubtitle}
+                        onChange={(e) => setEditLocationSubtitle(e.target.value)}
+                        className="flex-1 bg-[#1a0508] border border-[#ffb703]/40 rounded-lg px-2 py-1 text-xs text-[#fceade] focus:outline-none"
+                      />
+                      <button onClick={updateLocationSubtitle} className="p-1 bg-[#ffb703] text-[#1a0508] rounded-lg">
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => setIsEditingLocationSubtitle(false)} className="p-1 bg-[#4a121a] rounded-lg">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-[#d0a5aa] mt-0.5">{settings.location_subtitle || 'Đại học Duy Tân 03 Quang Trung Đà Nẵng'}</p>
+                      {isAdminMode && (
+                        <button 
+                          onClick={() => setIsEditingLocationSubtitle(true)}
+                          className="p-1 text-[#ffb703] hover:text-[#fceade] transition-colors"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="text-[10px] text-[#d0a5aa] leading-relaxed border-t border-[#4a121a]/30 pt-2.5">
-                  🚗 **Thông tin đỗ xe:** Khách đi ô tô có thể gửi xe tại Bãi đỗ xe số 2 đối diện Cổng chính. Xe máy gửi tại hầm gửi xe của Hội trường.
-                </div>
+
+                {isEditingLocationParking ? (
+                  <div className="mt-1 flex gap-2">
+                    <textarea
+                      value={editLocationParking}
+                      onChange={(e) => setEditLocationParking(e.target.value)}
+                      rows={2}
+                      className="flex-1 bg-[#1a0508] border border-[#ffb703]/40 rounded-lg px-2 py-1 text-xs text-[#fceade] focus:outline-none"
+                    />
+                    <button onClick={updateLocationParking} className="p-1 bg-[#ffb703] text-[#1a0508] rounded-lg self-end">
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => setIsEditingLocationParking(false)} className="p-1 bg-[#4a121a] rounded-lg self-end">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between border-t border-[#4a121a]/30 pt-2.5 mt-2">
+                    <div className="text-[10px] text-[#d0a5aa] leading-relaxed flex-1">
+                      {settings.location_parking || '🚗 Thông tin đỗ xe: Khách gửi xe tại bãi gửi xe của trường Đại học Duy Tân.'}
+                    </div>
+                    {isAdminMode && (
+                      <button 
+                        onClick={() => setIsEditingLocationParking(true)}
+                        className="p-1 text-[#ffb703] hover:text-[#fceade] transition-colors shrink-0 ml-1"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               <a 
@@ -874,31 +1768,11 @@ function App() {
         {/* ==================== VIEW 3: GUESTBOOK & WISH FEED ==================== */}
         {activeView === 'guestbook' && (
           <div className="space-y-4 animate-fade-in">
-            {/* 📊 ADMIN STATS PANEL (Show only to admin in guestbook) */}
-            {isAdminMode && (
-              <section className="p-4 rounded-2xl bg-[#2d0b11]/40 border border-[#4a121a]/50">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#ffb703] mb-3">
-                  <BarChart2 className="w-4 h-4" />
-                  <span>THỐNG KÊ LỄ TỐT NGHIỆP</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-center">
-                  <div className="bg-[#1a0508]/60 p-2.5 rounded-xl border border-[#4a121a]/30">
-                    <span className="text-[9px] text-[#d0a5aa] block">SẼ ĐẾN DỰ LỄ 🎓</span>
-                    <span className="text-xl font-extrabold text-[#ffb703]">{adminStats.total_attending}</span>
-                  </div>
-                  <div className="bg-[#1a0508]/60 p-2.5 rounded-xl border border-[#4a121a]/30">
-                    <span className="text-[9px] text-[#d0a5aa] block">CHÚC TỪ XA 💌</span>
-                    <span className="text-xl font-extrabold text-[#d0a5aa]">{adminStats.total_absent}</span>
-                  </div>
-                </div>
-              </section>
-            )}
-
             {/* 🎬 SLIDESHOW LAUNCHER CARD */}
             <section className="bg-gradient-to-r from-[#4a0e17]/80 to-[#2d0b11]/80 border border-[#ffb703]/30 rounded-2xl p-4 flex items-center justify-between shadow-glow-burgundy">
               <div className="flex-1 pr-3">
-                <h4 className="text-xs font-bold text-[#ffb703]">Trình Chiếu Lễ Đường</h4>
-                <p className="text-[9px] text-[#d0a5aa] mt-0.5 leading-relaxed">Bật trình chiếu xoay vòng lời chúc & hình ảnh trên màn hình lớn tại lễ đường.</p>
+                <h4 className="text-xs font-bold text-[#ffb703]">Trình Chiếu Lời Chúc</h4>
+                <p className="text-[9px] text-[#d0a5aa] mt-0.5 leading-relaxed">Bật trình chiếu xoay vòng lời chúc & hình ảnh trên màn hình lớn.</p>
               </div>
               <button
                 onClick={() => {
@@ -976,7 +1850,7 @@ function App() {
                         : 'bg-[#2d0b11]/50 text-[#d0a5aa] border-[#4a121a]/30 hover:bg-[#4a121a]/40'
                     }`}
                   >
-                    {tag === 'all' ? 'TẤT CẢ 🌟' : tag.toUpperCase()}
+                    {tag === 'all' ? 'TẤT CẢ 🌟' : tag === 'attending' ? 'SẼ ĐẾN DỰ LỄ 🎓' : 'CHÚC TỪ XA 💌'}
                   </button>
                 ))}
               </div>
@@ -1008,19 +1882,21 @@ function App() {
                           </span>
                         )}
                       </div>
-                      <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full ${
-                        wish.attendance_status === 'attending' 
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                          : wish.attendance_status === 'absent'
-                          ? 'bg-stone-500/15 text-[#d0a5aa] border border-stone-500/20'
-                          : 'bg-blue-500/10 text-blue-400 border border-blue-500/25'
-                      }`}>
-                        {wish.attendance_status === 'attending' 
-                          ? '🎓 SẼ ĐẾN DỰ LỄ' 
-                          : wish.attendance_status === 'absent' 
-                          ? '💌 CHÚC TỪ XA' 
-                          : `✍️ ${wish.attendance_status}`}
-                      </span>
+                      {!isAdminMode && (
+                        <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full ${
+                          (wish.attendance_status === 'attending' || wish.attendance_status === 'attending_ceremony' || wish.attendance_status === 'attended')
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                            : 'bg-stone-500/15 text-[#d0a5aa] border border-stone-500/20'
+                        }`}>
+                          {wish.attendance_status === 'attending' 
+                            ? '🎓 SẼ ĐẾN DỰ LỄ' 
+                            : wish.attendance_status === 'attending_ceremony'
+                            ? '📸 ĐANG Ở BUỔI LỄ'
+                            : wish.attendance_status === 'attended'
+                            ? '🎓 ĐÃ THAM GIA'
+                            : '💌 CHÚC TỪ XA'}
+                        </span>
+                      )}
                     </div>
 
                     {/* Wish Message */}
@@ -1062,7 +1938,10 @@ function App() {
                     
                     {/* Date time */}
                     <div className="text-[8px] text-[#d0a5aa]/60 mt-1 text-right">
-                      {new Date(wish.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - {new Date(wish.created_at).toLocaleDateString('vi-VN')}
+                      {wish.created_at ? (() => {
+                        const dateObj = new Date(wish.created_at.endsWith('Z') ? wish.created_at : wish.created_at + 'Z');
+                        return `${dateObj.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - ${dateObj.toLocaleDateString('vi-VN')}`;
+                      })() : ''}
                     </div>
 
                     {/* 👑 ADMIN INTERACTION ACTIONS */}
@@ -1119,47 +1998,305 @@ function App() {
         {/* ==================== VIEW 4: PHOTO GALLERY ==================== */}
         {activeView === 'gallery' && (
           <div className="space-y-6 animate-fade-in text-center py-6">
-            {/* 📷 IMMERSIVE GALLERY PLACEHOLDER SCREEN */}
-            <section className="bg-gradient-to-br from-[#2d0b11]/70 via-[#4a0e17]/50 to-[#1e0305]/75 border border-[#ffb703]/20 backdrop-blur-md rounded-3xl p-8 shadow-glow-burgundy space-y-4">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#150305] border border-[#ffb703]/30 text-[#ffb703] animate-pulse mb-2">
-                <Camera className="w-8 h-8" />
-              </div>
-              
-              <h2 className="text-lg font-extrabold text-[#fceade] tracking-wide">THƯ VIỆN KỶ NIỆM HD</h2>
-              <p className="text-xs text-[#d0a5aa] leading-relaxed max-w-[85%] mx-auto font-medium">
-                Kho lưu trữ hình ảnh chất lượng cao (HD) từ phó nháy máy cơ và bạn bè chụp tại buổi lễ.
-              </p>
-              
-              <div className="py-2.5 px-4 rounded-xl bg-[#150305]/60 border border-[#ffb703]/10 inline-block text-[10px] font-bold text-[#ffb703] tracking-widest uppercase">
-                🔒 SẼ MỞ SAU NGÀY LỄ TỐT NGHIỆP
-              </div>
+            {isAdminMode || settings.gallery_unlocked === 'true' ? (
+              <div className="space-y-6">
+                <section className="bg-gradient-to-br from-[#2d0b11]/70 via-[#4a0e17]/50 to-[#1e0305]/75 border border-[#ffb703]/20 backdrop-blur-md rounded-3xl p-6 shadow-glow-burgundy space-y-4">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#150305] border border-[#ffb703]/30 text-[#ffb703] mb-1">
+                    <Camera className="w-6 h-6" />
+                  </div>
+                  <h2 className="text-lg font-extrabold text-[#fceade] tracking-wide uppercase">THƯ VIỆN KỶ NIỆM</h2>
+                  <p className="text-xs text-[#d0a5aa] max-w-[85%] mx-auto font-medium">
+                    Kho lưu trữ hình ảnh chất lượng cao tại buổi lễ.
+                  </p>
+                  {isAdminMode && (
+                    <div className="flex flex-col items-center gap-2 pt-2 border-t border-[#4a121a]/30">
+                      <div className="text-[10px] bg-orange-500/20 text-orange-400 border border-orange-500/30 rounded-xl py-1 px-3 inline-block font-bold">
+                        👑 Chế độ Admin: Bạn có quyền xem trước thư viện ảnh
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <input
+                          type="checkbox"
+                          id="gallery_unlocked_page_checkbox"
+                          checked={settings.gallery_unlocked === 'true'}
+                          onChange={(e) => toggleGalleryLock(e.target.checked)}
+                          className="w-4 h-4 rounded border-[#4a121a] bg-[#150305] text-[#ffb703] focus:ring-0 cursor-pointer"
+                        />
+                        <label htmlFor="gallery_unlocked_page_checkbox" className="text-[10px] font-bold text-[#ffb703] cursor-pointer">
+                          MỞ KHÓA THƯ VIỆN ẢNH CHO KHÁCH MỜI
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </section>
 
-              <div className="h-[1px] w-full bg-[#4a121a]/40 my-6"></div>
-
-              <div className="space-y-2">
-                <span className="text-[9px] font-bold text-[#d0a5aa] block">LINK THƯ MỤC GỐC (GOOGLE DRIVE):</span>
-                <a 
-                  href="https://drive.google.com" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#800020] to-[#ffb703] text-[#1a0508] font-bold text-xs shadow-glow-gold hover:scale-[1.03] active:scale-95 transition-all"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>TRUY CẬP DRIVE ẢNH HD</span>
-                </a>
+                {allMediaItems.length === 0 ? (
+                  <div className="text-center p-12 rounded-3xl bg-[#2d0b11]/30 border border-[#4a121a]/30 text-xs text-[#d0a5aa] leading-relaxed">
+                    📷 Chưa có hình ảnh hay video nào được đăng tải. Hãy gửi lời chúc kèm hình ảnh/video để xuất hiện tại đây nhé!
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {allMediaItems.map((item, idx) => (
+                      <div 
+                        key={idx} 
+                        className="relative group rounded-2xl overflow-hidden border border-[#ffb703]/25 bg-[#150305] aspect-square cursor-pointer hover:border-[#ffb703] transition-all shadow-md"
+                        onClick={() => setZoomedImage(item.url)}
+                      >
+                        {isVideoUrl(item.url) ? (
+                          <div className="w-full h-full relative flex items-center justify-center">
+                            <video src={item.url} className="w-full h-full object-cover" preload="metadata" />
+                            <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                              <div className="w-8 h-8 rounded-full bg-[#ffb703]/80 text-[#1a0508] flex items-center justify-center pl-0.5">
+                                <span className="text-[10px] text-[#1a0508]">▶</span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <img src={item.url} alt={`media-${idx}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-2 text-left opacity-0 group-hover:opacity-100 transition-opacity">
+                          <p className="text-[9px] font-bold text-[#ffb703] truncate">Từ: {item.sender_name}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            </section>
+            ) : (
+              <section className="bg-gradient-to-br from-[#2d0b11]/70 via-[#4a0e17]/50 to-[#1e0305]/75 border border-[#ffb703]/20 backdrop-blur-md rounded-3xl p-8 shadow-glow-burgundy space-y-4">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#150305] border border-[#ffb703]/30 text-[#ffb703] animate-pulse mb-2">
+                  <Camera className="w-8 h-8" />
+                </div>
+                
+                <h2 className="text-lg font-extrabold text-[#fceade] tracking-wide">THƯ VIỆN KỶ NIỆM</h2>
+                <p className="text-xs text-[#d0a5aa] leading-relaxed max-w-[85%] mx-auto font-medium">
+                  Kho lưu trữ hình ảnh chất lượng cao tại buổi lễ.
+                </p>
+                
+                <div className="py-2.5 px-4 rounded-xl bg-[#150305]/60 border border-[#ffb703]/10 inline-block text-[10px] font-bold text-[#ffb703] tracking-widest uppercase">
+                  🔒 SẼ MỞ SAU NGÀY LỄ TỐT NGHIỆP
+                </div>
+
+                <div className="h-[1px] w-full bg-[#4a121a]/40 my-6"></div>
+
+                <div className="p-4 rounded-2xl bg-[#150305]/60 border border-[#ffb703]/10 text-xs text-[#d0a5aa] leading-relaxed max-w-xs mx-auto">
+                  📸 Hình ảnh/video từ buổi lễ tốt nghiệp của Quang Tùng đang được tổng hợp và xử lý. Thư viện sẽ tự động mở khóa sau khi buổi lễ chính thức kết thúc để khách mời có thể vào xem và tải về.
+                </div>
+              </section>
+            )}
           </div>
         )}
 
-        {/* ➕ FLOATING ACTIONS BUTTON FOR SUBMITTING WISH (Only show in GuestbookView for users) */}
-        {!isAdminMode && activeView === 'guestbook' && (
+        {/* ==================== VIEW 5: MONITORING / TRAFFIC ==================== */}
+        {activeView === 'monitoring' && isAdminMode && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Title Banner */}
+            <section className="bg-gradient-to-br from-[#2d0b11]/70 via-[#4a0e17]/50 to-[#1e0305]/75 border border-[#ffb703]/20 backdrop-blur-md rounded-3xl p-5 shadow-glow-burgundy space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-[#150305] border border-[#ffb703]/30 text-[#ffb703]">
+                    <BarChart2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-extrabold text-[#fceade] tracking-wide uppercase">GIÁM SÁT TRUY CẬP</h2>
+                    <p className="text-[9px] text-[#d0a5aa] font-medium">Lưu lượng truy cập trang web thời gian thực</p>
+                  </div>
+                </div>
+                <button
+                  onClick={fetchTrafficStats}
+                  disabled={trafficLoading}
+                  className="p-2 rounded-xl bg-[#4a121a] hover:bg-[#ffb703]/20 border border-[#ffb703]/20 text-[#ffb703] transition-all flex items-center justify-center animate-hover"
+                  title="Làm mới"
+                >
+                  <RefreshCw className={`w-4 h-4 ${trafficLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            </section>
+
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-3 gap-2">
+              {/* Card 1: Active Users */}
+              <div className="bg-[#2d0b11]/40 border border-[#5c1620]/30 backdrop-blur-md rounded-2xl p-3 text-center relative overflow-hidden flex flex-col justify-between">
+                <span className="text-[8px] font-bold text-[#d0a5aa] uppercase tracking-wider block">Trực tuyến</span>
+                <div className="flex items-center justify-center gap-1.5 my-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-xl font-black text-emerald-400 font-mono">
+                    {trafficStats.active_users}
+                  </span>
+                </div>
+                <span className="text-[7px] text-[#d0a5aa]/60 block font-medium">(Trong 5 phút)</span>
+              </div>
+
+              {/* Card 2: Page Views */}
+              <div className="bg-[#2d0b11]/40 border border-[#5c1620]/30 backdrop-blur-md rounded-2xl p-3 text-center flex flex-col justify-between">
+                <span className="text-[8px] font-bold text-[#d0a5aa] uppercase tracking-wider block">Lượt Xem</span>
+                <span className="text-xl font-black text-[#ffb703] font-mono my-2 block">
+                  {trafficStats.total_views}
+                </span>
+                <span className="text-[7px] text-[#d0a5aa]/60 block font-medium">Tổng lượt tải</span>
+              </div>
+
+              {/* Card 3: Unique Visitors */}
+              <div className="bg-[#2d0b11]/40 border border-[#5c1620]/30 backdrop-blur-md rounded-2xl p-3 text-center flex flex-col justify-between">
+                <span className="text-[8px] font-bold text-[#d0a5aa] uppercase tracking-wider block">Khách</span>
+                <span className="text-xl font-black text-[#ffb703] font-mono my-2 block">
+                  {trafficStats.total_visitors}
+                </span>
+                <span className="text-[7px] text-[#d0a5aa]/60 block font-medium">IP duy nhất</span>
+              </div>
+            </div>
+
+            {/* Device breakdown & top endpoints */}
+            <div className="grid grid-cols-1 gap-4">
+              {/* Device breakdown card */}
+              <div className="bg-[#2d0b11]/40 border border-[#5c1620]/30 backdrop-blur-md rounded-2xl p-4 space-y-3">
+                <h3 className="text-[10px] font-bold tracking-widest text-[#ffb703] uppercase">PHÂN LOẠI THIẾT BỊ</h3>
+                
+                {(() => {
+                  const totalDevices = trafficStats.device_stats.mobile + trafficStats.device_stats.desktop;
+                  const mobilePercentage = totalDevices > 0 ? Math.round((trafficStats.device_stats.mobile / totalDevices) * 100) : 0;
+                  const desktopPercentage = totalDevices > 0 ? Math.round((trafficStats.device_stats.desktop / totalDevices) * 100) : 0;
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-[10px] font-semibold">
+                        <span className="text-[#ffb703]">Mobile: {mobilePercentage}% ({trafficStats.device_stats.mobile})</span>
+                        <span className="text-[#d0a5aa]">Desktop: {desktopPercentage}% ({trafficStats.device_stats.desktop})</span>
+                      </div>
+                      <div className="w-full bg-[#150305] rounded-full h-2.5 overflow-hidden flex border border-[#4a121a]/55">
+                        <div style={{ width: `${mobilePercentage}%` }} className="bg-[#ffb703] h-full transition-all duration-500"></div>
+                        <div style={{ width: `${desktopPercentage}%` }} className="bg-[#800020] h-full transition-all duration-500"></div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Top Endpoints card */}
+              <div className="bg-[#2d0b11]/40 border border-[#5c1620]/30 backdrop-blur-md rounded-2xl p-4 space-y-3">
+                <h3 className="text-[10px] font-bold tracking-widest text-[#ffb703] uppercase">TOP 5 TRANG TRUY CẬP NHIỀU NHẤT</h3>
+                <div className="space-y-2">
+                  {trafficStats.top_endpoints && trafficStats.top_endpoints.length > 0 ? (
+                    trafficStats.top_endpoints.map((ep, idx) => (
+                      <div key={idx} className="flex justify-between items-center bg-[#150305]/65 border border-[#4a121a]/30 p-2.5 rounded-xl text-xs">
+                        <span className="font-mono text-[#d0a5aa] truncate max-w-[70%]">{ep.path}</span>
+                        <span className="text-[#ffb703] font-bold shrink-0">{ep.count} view</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-[10px] text-[#d0a5aa]/60 py-2">Chưa có dữ liệu thống kê đường dẫn</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Recent Logs Table */}
+            <div className="bg-[#2d0b11]/40 border border-[#5c1620]/30 backdrop-blur-md rounded-2xl p-4 space-y-3">
+              <div className="flex justify-between items-center border-b border-[#4a121a]/30 pb-2">
+                <h3 className="text-[10px] font-bold tracking-widest text-[#ffb703] uppercase">
+                  NHẬT KÝ HOẠT ĐỘNG GẦN ĐÂY ({logsLimit} LƯỢT)
+                </h3>
+                <button
+                  onClick={downloadTrafficCSV}
+                  className="px-2.5 py-1 rounded-lg bg-[#4a121a] hover:bg-[#ffb703]/25 text-[#ffb703] border border-[#ffb703]/20 text-[9px] font-bold flex items-center gap-1 transition-all animate-hover"
+                  title="Tải toàn bộ nhật ký dạng CSV"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>Xuất CSV</span>
+                </button>
+              </div>
+              
+              <div className="overflow-x-auto select-text scrollbar-thin">
+                <table className="w-full text-left border-collapse text-[10px]">
+                  <thead>
+                    <tr className="border-b border-[#4a121a]/40 text-[#ffb703] font-bold">
+                      <th className="pb-2 pr-2">Thời Gian</th>
+                      <th className="pb-2 pr-2">Địa Chỉ IP</th>
+                      <th className="pb-2 pr-2">Đường Dẫn</th>
+                      <th className="pb-2">Thiết Bị</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#4a121a]/20">
+                    {trafficStats.recent_logs && trafficStats.recent_logs.length > 0 ? (
+                      trafficStats.recent_logs.map((log) => {
+                        // Vietnam time formatting (UTC+7 force)
+                        const formatVietnamTime = (isoString) => {
+                          if (!isoString) return '';
+                          try {
+                            const date = new Date(isoString);
+                            return date.toLocaleString('vi-VN', {
+                              timeZone: 'Asia/Ho_Chi_Minh',
+                              hour12: false,
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                              day: '2-digit',
+                              month: '2-digit'
+                            });
+                          } catch (e) {
+                            return isoString;
+                          }
+                        };
+
+                        const getShortUA = (ua) => {
+                          if (!ua) return 'Unknown';
+                          if (ua.includes('iPhone')) return 'iPhone / iOS';
+                          if (ua.includes('iPad')) return 'iPad / iOS';
+                          if (ua.includes('Android')) {
+                            if (ua.includes('Mobi')) return 'Android Mobile';
+                            return 'Android Tablet';
+                          }
+                          if (ua.includes('Windows NT')) return 'Windows Desktop';
+                          if (ua.includes('Macintosh')) return 'macOS Desktop';
+                          if (ua.includes('Linux')) return 'Linux Desktop';
+                          return ua.split(' ')[0] || 'Unknown';
+                        };
+
+                        return (
+                          <tr key={log.id} className="text-[#fceade]/90 hover:bg-[#150305]/20">
+                            <td className="py-2 pr-2 whitespace-nowrap font-mono">{formatVietnamTime(log.timestamp)}</td>
+                            <td className="py-2 pr-2 font-mono text-[#ffb703]/80">{log.ip_address}</td>
+                            <td className="py-2 pr-2 font-mono truncate max-w-[120px]" title={log.endpoint}>{log.endpoint}</td>
+                            <td className="py-2 text-[#d0a5aa]" title={log.user_agent}>{getShortUA(log.user_agent)}</td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={4} className="py-4 text-center text-xs text-[#d0a5aa]/60">
+                          Chưa ghi nhận hoạt động nào
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {trafficStats.recent_logs && trafficStats.recent_logs.length >= logsLimit && (
+                <div className="pt-2 flex justify-center border-t border-[#4a121a]/20">
+                  <button
+                    onClick={() => setLogsLimit(prev => prev + 20)}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#4a0e17] border border-[#ffb703]/30 hover:border-[#ffb703]/60 text-[#ffb703] text-[9px] font-bold transition-all hover:scale-[1.02] active:scale-95 shadow-md"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Xem thêm nhật ký</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ➕ FLOATING ACTIONS BUTTON FOR SUBMITTING WISH */}
+        {!isAdminMode && activeView !== 'home' && (
           <div className="fixed bottom-24 right-6 z-40">
             <button
               onClick={() => setIsSubmitOpen(true)}
-              className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-r from-[#800020] via-[#ffb703] to-[#800020] text-[#1a0508] shadow-glow-gold hover:scale-105 active:scale-95 transition-all animate-bounce"
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-gradient-to-r from-[#800020] via-[#ffb703] to-[#800020] text-[#1a0508] font-black text-xs tracking-wider uppercase shadow-glow-gold hover:scale-105 active:scale-95 transition-all animate-bounce"
             >
-              <Plus className="w-6 h-6 shrink-0" />
+              <Plus className="w-5 h-5 shrink-0" />
+              <span>Gửi lời chúc</span>
             </button>
           </div>
         )}
@@ -1171,8 +2308,8 @@ function App() {
               
               <div className="flex items-center justify-between mb-4 border-b border-[#4a121a] pb-2">
                 <span className="text-xs font-black text-[#ffb703] tracking-widest uppercase flex items-center gap-1.5">
-                  <Award className="w-4 h-4" />
-                  <span>GỬI LỜI CHÚC TỐT NGHIỆP</span>
+                  <Send className="w-4 h-4 text-[#ffb703]" />
+                  <span>XÁC NHẬN THAM DỰ</span>
                 </span>
                 <button onClick={() => setIsSubmitOpen(false)} className="p-1 rounded-full bg-[#4a121a]/80 text-[#fceade]">
                   <X className="w-4 h-4" />
@@ -1183,110 +2320,54 @@ function App() {
                 
                 {/* 1. Sender Name */}
                 <div>
-                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1">TÊN CỦA CẬU *</label>
+                  <label className="text-[9px] font-bold text-[#ffb703] block mb-1">TÊN CỦA CẬU *</label>
                   <input
                     type="text"
                     required
                     value={formData.sender_name}
                     onChange={(e) => setFormData({...formData, sender_name: e.target.value})}
-                    placeholder="Nhập tên của cậu..."
+                    placeholder="Nhập tên của cậu để xác nhận..."
                     className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
                   />
                 </div>
 
-                {/* 2. RSVP Options */}
+                {/* 2. Attendance Status Buttons */}
                 <div>
-                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1.5">CẬU CÓ ĐẾN DỰ LỄ TRỰC TIẾP KHÔNG? *</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRsvpType('attending');
-                        setFormData({...formData, attendance_status: 'attending'});
-                      }}
-                      className={`py-2 px-1 text-[9px] font-bold rounded-xl border flex items-center justify-center gap-0.5 transition-all ${
-                        rsvpType === 'attending'
-                          ? 'bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]'
-                          : 'bg-[#150305] text-[#d0a5aa] border-[#4a121a]'
-                      }`}
-                    >
-                      <span>SẼ ĐẾN DỰ LỄ 🎓</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRsvpType('absent');
-                        setFormData({...formData, attendance_status: 'absent'});
-                      }}
-                      className={`py-2 px-1 text-[9px] font-bold rounded-xl border flex items-center justify-center gap-0.5 transition-all ${
-                        rsvpType === 'absent'
-                          ? 'bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]'
-                          : 'bg-[#150305] text-[#d0a5aa] border-[#4a121a]'
-                      }`}
-                    >
-                      <span>CHÚC TỪ XA 💌</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRsvpType('other');
-                        setFormData({...formData, attendance_status: customAttendance || 'Khác'});
-                      }}
-                      className={`py-2 px-1 text-[9px] font-bold rounded-xl border flex items-center justify-center gap-0.5 transition-all ${
-                        rsvpType === 'other'
-                          ? 'bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]'
-                          : 'bg-[#150305] text-[#d0a5aa] border-[#4a121a]'
-                      }`}
-                    >
-                      <span>KHÁC ✍️</span>
-                    </button>
+                  <label className="text-[9px] font-bold text-[#ffb703] block mb-1">CẬU CÓ THỂ THAM GIA CÙNG TÙNG KHÔNG? *</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {getAttendanceOptions().map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setFormData({...formData, attendance_status: opt.value})}
+                        className={`py-2 px-1 text-xs font-bold rounded-xl border transition-all ${
+                          formData.attendance_status === opt.value
+                            ? 'bg-[#ffb703]/25 text-[#ffb703] border-[#ffb703]'
+                            : 'bg-[#150305] text-[#d0a5aa] border-[#4a121a]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
                   </div>
-                  
-                  {rsvpType === 'other' && (
-                    <div className="mt-2">
-                      <input
-                        type="text"
-                        required
-                        value={customAttendance}
-                        onChange={(e) => {
-                          setCustomAttendance(e.target.value);
-                          setFormData({...formData, attendance_status: e.target.value});
-                        }}
-                        placeholder="Nhập trạng thái tham dự của cậu..."
-                        className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
-                      />
-                    </div>
-                  )}
                 </div>
 
                 {/* 3. Wish Message */}
                 <div>
-                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1">LỜI CHÚC CỦA CẬU *</label>
+                  <label className="text-[9px] font-bold text-[#ffb703] block mb-1">TIN NHẮN / LỜI CHÚC NGẮN *</label>
                   <textarea
                     required
-                    rows={4}
+                    rows={2}
                     value={formData.message}
                     onChange={(e) => setFormData({...formData, message: e.target.value})}
-                    placeholder="..."
-                    className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
-                  />
-                </div>
-
-                {/* 4. Photographer Tag */}
-                <div>
-                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1">NGUỒN ẢNH / PHÓ NHÁY (NẾU CÓ)</label>
-                  <input
-                    type="text"
-                    value={formData.photographer_tag}
-                    onChange={(e) => setFormData({...formData, photographer_tag: e.target.value})}
-                    placeholder="Ví dụ: Máy cơ Tuấn, iPhone Mẹ..."
+                    placeholder="Gửi vài lời chia vui cùng Tùng nhé..."
                     className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
                   />
                 </div>
 
                 {/* 5. Image & Video File Upload */}
                 <div>
-                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1">ĐÍNH KÈM HÌNH ẢNH & VIDEO KỶ NIỆM (TÙY CHỌN)</label>
+                  <label className="text-[9px] font-bold text-[#ffb703] block mb-1">ĐÍNH KÈM ẢNH & VIDEO KỶ NIỆM (TÙY CHỌN)</label>
                   
                   {filePreviews.length > 0 && (
                     <div className="grid grid-cols-3 gap-2 mb-3 max-h-32 overflow-y-auto p-1 bg-[#150305] rounded-xl border border-[#4a121a]/30">
@@ -1311,7 +2392,7 @@ function App() {
 
                   <label className="border-2 border-dashed border-[#4a121a] hover:border-[#ffb703]/50 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer bg-[#150305]/50 transition-colors">
                     <Camera className="w-6 h-6 text-[#ffb703] mb-1" />
-                    <span className="text-[10px] text-[#d0a5aa] font-bold">NHẤN VÀO ĐỂ TẢI ẢNH & VIDEO</span>
+                    <span className="text-[10px] text-[#ffb703] font-bold">NHẤN VÀO ĐỂ TẢI ẢNH & VIDEO KỶ NIỆM</span>
                     <span className="text-[8px] text-[#d0a5aa]/60 mt-0.5">Chọn nhiều ảnh/video cùng lúc</span>
                     <input 
                       type="file" 
@@ -1323,12 +2404,11 @@ function App() {
                   </label>
                 </div>
 
-
                 {/* Submit Button */}
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-gradient-to-r from-[#800020] to-[#ffb703] text-[#1a0508] text-xs font-black rounded-xl hover:scale-[1.02] active:scale-95 transition-all shadow-glow-gold flex items-center justify-center gap-1.5"
+                  disabled={loading || !formData.sender_name || !formData.message}
+                  className="w-full py-2.5 bg-gradient-to-r from-[#800020] to-[#ffb703] text-[#1a0508] text-xs font-black rounded-xl hover:scale-[1.02] active:scale-95 transition-all shadow-glow-gold flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
                   {loading ? (
                     <>
@@ -1337,8 +2417,8 @@ function App() {
                     </>
                   ) : (
                     <>
-                      <Send className="w-4 h-4" />
-                      <span>GỬI LỜI CHÚC ĐỢI PHÊ DUYỆT 🎓</span>
+                      <Check className="w-4 h-4" />
+                      <span>XÁC NHẬN & GỬI LỜI CHÚC 🎓</span>
                     </>
                   )}
                 </button>
@@ -1407,6 +2487,110 @@ function App() {
           </div>
         )}
 
+        {/* ⚙️ SYSTEM SETTINGS MODAL */}
+        {isAdminSettingsOpen && (
+          <div className="fixed inset-0 bg-[#150305]/95 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-[#2d0b11] border border-[#ffb703]/30 rounded-3xl p-6 max-w-sm w-full shadow-glow-gold max-h-[90vh] overflow-y-auto space-y-4">
+              
+              <div className="flex items-center justify-between mb-2 border-b border-[#4a121a] pb-2">
+                <span className="text-xs font-black text-[#ffb703] tracking-widest uppercase flex items-center gap-1.5">
+                  <Settings className="w-4 h-4 text-[#ffb703]" />
+                  <span>CẤU HÌNH HỆ THỐNG</span>
+                </span>
+                <button onClick={() => setIsAdminSettingsOpen(false)} className="p-1 rounded-full bg-[#4a121a]/80 text-[#fceade]">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* 1. Site Title */}
+                <div>
+                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1">TIÊU ĐỀ TRANG WEB</label>
+                  <input
+                    type="text"
+                    value={editSiteTitle}
+                    onChange={(e) => setEditSiteTitle(e.target.value)}
+                    className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
+                  />
+                </div>
+
+
+
+                {/* 3. Invitation Description */}
+                <div>
+                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1">MÔ TẢ THƯ MỜI</label>
+                  <textarea
+                    rows={3}
+                    value={editInvitationDesc}
+                    onChange={(e) => setEditInvitationDesc(e.target.value)}
+                    className="w-full bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
+                  />
+                </div>
+
+                {/* 4. Avatar Upload */}
+                <div>
+                  <label className="text-[10px] font-bold text-[#d0a5aa] block mb-1">ẢNH ĐẠI DIỆN (AVATAR URL)</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={editAvatarUrl}
+                      onChange={(e) => setEditAvatarUrl(e.target.value)}
+                      className="flex-1 bg-[#150305] border border-[#4a121a] rounded-xl px-3 py-2 text-xs text-[#fceade] focus:outline-none focus:border-[#ffb703]"
+                      placeholder="Dán URL ảnh hoặc tải lên..."
+                    />
+                    <label className="px-3 py-2 bg-[#4a121a] hover:bg-[#ffb703]/20 border border-[#ffb703]/25 text-[#ffb703] rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer shrink-0">
+                      {editAvatarLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                      <span>Tải Lên</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={editAvatarLoading}
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handleAvatarUpload(e.target.files[0]);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {editAvatarUrl && (
+                    <div className="mt-2 flex items-center justify-center">
+                      <img 
+                        src={editAvatarUrl} 
+                        alt="Avatar Preview" 
+                        className="w-12 h-12 rounded-full object-cover border border-[#ffb703]/30"
+                      />
+                    </div>
+                  )}
+                </div>
+
+
+
+                {/* 7. Modal Controls */}
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={saveAdminSettings}
+                    className="flex-1 py-2.5 bg-gradient-to-r from-[#800020] to-[#ffb703] text-[#1a0508] text-xs font-black rounded-xl hover:scale-[1.02] active:scale-95 transition-all shadow-glow-gold flex items-center justify-center gap-1"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>LƯU CÀI ĐẶT</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsAdminSettingsOpen(false)}
+                    className="px-4 py-2.5 bg-[#4a121a] hover:bg-[#800020] border border-[#ffb703]/10 text-[#fceade] text-xs font-bold rounded-xl active:scale-95 transition-all"
+                  >
+                    HỦY
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* 📱 FLOATING BOTTOM GLASSMORPHIC NAVIGATION BAR */}
@@ -1444,12 +2628,23 @@ function App() {
           className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-2 cursor-zoom-out select-none"
           onClick={() => setZoomedImage(null)}
         >
-          <button 
-            onClick={() => setZoomedImage(null)}
-            className="absolute top-4 right-4 p-2 rounded-full bg-[#150305]/70 text-[#ffb703] border border-[#ffb703]/25 z-[110]"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="absolute top-4 right-4 flex gap-2 z-[110]">
+            <a 
+              href={`${API_BASE}/download?url=${encodeURIComponent(zoomedImage)}`}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="p-2 rounded-full bg-[#150305]/70 text-[#ffb703] border border-[#ffb703]/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+              title="Tải ảnh gốc"
+            >
+              <Download className="w-5 h-5" />
+            </a>
+            <button 
+              onClick={() => setZoomedImage(null)}
+              className="p-2 rounded-full bg-[#150305]/70 text-[#ffb703] border border-[#ffb703]/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
           
           {isVideoUrl(zoomedImage) ? (
             <video 
@@ -1469,7 +2664,7 @@ function App() {
         </div>
       )}
 
-      {/* 🎥 LỄ ĐƯỜNG FULLSCREEN AUTO-SLIDESHOW OVERLAY */}
+      {/* 🎥 FULLSCREEN AUTO-SLIDESHOW OVERLAY */}
       {isSlideshowOpen && (
         <div className="fixed inset-0 bg-gradient-to-br from-[#1e0305] via-[#3a060b] to-[#150305] z-[90] flex flex-col justify-between p-8 select-none overflow-hidden animate-fade-in">
           
@@ -1477,7 +2672,7 @@ function App() {
           <div className="flex justify-between items-center z-10">
             <div className="flex items-center gap-2">
               <Award className="w-6 h-6 text-[#ffb703] animate-pulse" />
-              <h2 className="text-sm font-black text-[#ffb703] tracking-widest uppercase">TRÌNH CHIẾU LỄ ĐƯỜNG 🎓</h2>
+              <h2 className="text-sm font-black text-[#ffb703] tracking-widest uppercase">TRÌNH CHIẾU LỜI CHÚC 🎓</h2>
             </div>
             <div className="flex items-center gap-3">
               <button 
@@ -1508,8 +2703,18 @@ function App() {
                     <span className="text-xl font-black text-[#ffb703] tracking-wider uppercase border-b-2 border-[#ffb703] pb-1">
                       {wishes[slideshowIndex].sender_name}
                     </span>
-                    <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      {wishes[slideshowIndex].attendance_status === 'attending' ? '🎓 SẼ ĐẾN DỰ LỄ' : '💌 CHÚC TỪ XA'}
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${
+                      (wishes[slideshowIndex].attendance_status === 'attending' || wishes[slideshowIndex].attendance_status === 'attending_ceremony' || wishes[slideshowIndex].attendance_status === 'attended')
+                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                        : 'bg-stone-500/15 text-[#d0a5aa] border border-stone-500/20'
+                    }`}>
+                      {wishes[slideshowIndex].attendance_status === 'attending' 
+                        ? '🎓 SẼ ĐẾN DỰ LỄ' 
+                        : wishes[slideshowIndex].attendance_status === 'attending_ceremony'
+                        ? '📸 ĐANG Ở BUỔI LỄ'
+                        : wishes[slideshowIndex].attendance_status === 'attended'
+                        ? '🎓 ĐÃ THAM GIA'
+                        : '💌 CHÚC TỪ XA'}
                     </span>
                   </div>
                   <blockquote className="text-2xl md:text-3xl text-[#fceade] font-medium leading-relaxed font-serif italic">
